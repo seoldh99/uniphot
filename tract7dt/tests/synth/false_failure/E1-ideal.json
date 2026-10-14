@@ -1,0 +1,58 @@
+{
+ "check_sha256": "6778b1476acde93dde1ed71e9cd96e194f7f4970b14111d3fc8bd066080102a1",
+ "created": "2026-10-10T03:45:17",
+ "generator_sha256": "aa555ce23684c059ff6ffd9cc796fba0a5e3a6ee3a1dfe547573c3b7be6b657e",
+ "n_fail": 19,
+ "n_repeats": 3000,
+ "normal_tail_rate": 0.005820240169259294,
+ "note": "unit 0.3 after review_0.3 fixes; 3000 repeats for the 95% upper bound",
+ "rate": 0.006333333333333333,
+ "rate_upper95": 0.009279320691467637,
+ "seconds": 1300.277,
+ "seed0": 20261010,
+ "stats": {
+  "gaussian4_snr300_ideal_fit_maxdiff": {
+   "hi": 1e-12,
+   "lo": 0.0,
+   "mean": 0.0,
+   "sd": 0.0,
+   "tail": 0.0
+  },
+  "gaussian4_snr300_mean_z": {
+   "hi": 4.0,
+   "lo": -4.0,
+   "mean": -0.009075490114559418,
+   "sd": 0.9960540740925973,
+   "tail": 5.927474425388706e-05
+  },
+  "gaussian4_snr300_var_ratio": {
+   "hi": 1.03,
+   "lo": 0.97,
+   "mean": 0.9998468377603298,
+   "sd": 0.01012430876506523,
+   "tail": 0.0030482851824294574
+  },
+  "moffat4_snr3000_ideal_fit_maxdiff": {
+   "hi": 1e-12,
+   "lo": 0.0,
+   "mean": 0.0,
+   "sd": 0.0,
+   "tail": 0.0
+  },
+  "moffat4_snr3000_mean_z": {
+   "hi": 4.0,
+   "lo": -4.0,
+   "mean": -0.02338546769825545,
+   "sd": 0.9868866451750515,
+   "tail": 5.0778547406827306e-05
+  },
+  "moffat4_snr3000_var_ratio": {
+   "hi": 1.03,
+   "lo": 0.97,
+   "mean": 1.0000475888568534,
+   "sd": 0.009985564149506574,
+   "tail": 0.0026619016951691227
+  }
+ },
+ "test_id": "E1-ideal"
+}

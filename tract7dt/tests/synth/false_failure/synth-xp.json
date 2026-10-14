@@ -1,0 +1,30 @@
+{
+ "check_sha256": "6778b1476acde93dde1ed71e9cd96e194f7f4970b14111d3fc8bd066080102a1",
+ "created": "2026-10-10T03:23:36",
+ "generator_sha256": "aa555ce23684c059ff6ffd9cc796fba0a5e3a6ee3a1dfe547573c3b7be6b657e",
+ "n_fail": 0,
+ "n_repeats": 1000,
+ "normal_tail_rate": 6.70982305039437e-05,
+ "note": "unit 0.3 after review_0.3 fixes (B1-B4)",
+ "rate": 0.0,
+ "rate_upper95": 0.002991249545095295,
+ "seconds": 0.143,
+ "seed0": 20261010,
+ "stats": {
+  "mean_z": {
+   "hi": 4.0,
+   "lo": -4.0,
+   "mean": 0.04461533379646869,
+   "sd": 1.0024366239643228,
+   "tail": 6.709818514433308e-05
+  },
+  "rms_ratio": {
+   "hi": 1.1,
+   "lo": 0.9,
+   "mean": 0.9992369527901221,
+   "sd": 0.015166191139412016,
+   "tail": 4.5359610624471363e-11
+  }
+ },
+ "test_id": "synth-xp"
+}

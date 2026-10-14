@@ -1,0 +1,58 @@
+[project]
+name = "uniphot"
+dynamic = ["version"]
+description = "GPU forced PSF photometry for multi-band imaging (import name tract7dt in 0.1)"
+readme = "README.md"
+requires-python = ">=3.11"   # tested: 3.11 (conda), 3.13 (venv)
+# GPL-2.0-only while four Tractor-derived pieces remain (listed in NOTICE).
+license = "GPL-2.0-only"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Danhyeuk Seol", email = "tjfeksgur@snu.ac.kr" }]
+keywords = ["astronomy", "photometry", "PSF photometry", "forced photometry", "GPU", "JAX"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+  "numpy",
+  "scipy>=1.17.1",   # 1.17.0 has an LSQR convergence regression; 1.17.1 fixes it.
+  "pandas",
+  "astropy",
+  "photutils",
+  "sep",
+  "matplotlib",
+  "PyYAML",
+  "jax>=0.9.0",      # tested 0.9.0 and 0.11.2; 0.4.34 lacks jax.enable_x64 (memory probes). GPU: extra "cuda12".
+]
+
+[project.optional-dependencies]
+cuda12 = ["jax[cuda12]>=0.9.0"]
+test = ["pytest", "pyflakes"]
+
+[project.urls]
+Homepage = "https://github.com/seoldh99/uniphot"
+
+[project.scripts]
+uniphot = "tract7dt.cli:main"
+tract7dt = "tract7dt.cli:main"
+
+[build-system]
+# setuptools 77 is the first to accept the SPDX `license` string above.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { attr = "tract7dt._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tract7dt*"]
+
+[tool.setuptools.package-data]
+"tract7dt.data" = ["sample_config.yaml", "sersic_mog_table.npz"]
+# The test suite ships with the package (run it by path: python -m pytest <site-packages>/tract7dt/tests); its data too.
+"tract7dt.tests" = ["data/*.npz", "data/*.yaml"]
+"tract7dt.tests.synth" = ["false_failure/*.json"]

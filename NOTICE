@@ -1,0 +1,22 @@
+uniphot (Python import name: tract7dt)
+Copyright (C) 2026 Danhyeuk Seol
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation; version 2 of the License.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License in the
+file LICENSE for more details.
+
+This package no longer includes or imports the Tractor library
+(https://github.com/dstndstn/tractor, Copyright (C) 2011-2023 Dustin Lang
+(Perimeter Institute) & David W. Hogg (NYU/Flatiron), GPL version 2), but four
+pieces derived from it remain:
+  - tract7dt/fit/optimize/gpu/kernels/lanczos.py (Lanczos-3 image shift,
+    modelled on Tractor's lanczos_shift_image);
+  - the mixture-of-Gaussians constants in tract7dt/fit/grid_gpu/source_model.py;
+  - tract7dt/data/sersic_mog_table.npz and its generator
+    tract7dt/fit/grid_gpu/sersic_mog_gen.py (uses tractor.sersic when run);
+  - the alpha grid in tract7dt/fit/grid_gpu/solver_grid.py.

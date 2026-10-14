@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "uniphot"
+abstract: >-
+  GPU forced PSF photometry for multi-band images: uniphot measures the fluxes
+  of a given list of sources in images of one field taken in several bands.
+authors:
+  - family-names: Seol
+    given-names: Danhyeuk
+    affiliation: "Seoul National University"
+    email: tjfeksgur@snu.ac.kr
+version: "0.1.0"
+date-released: "2026-10-15"
+license: GPL-2.0-only
+repository-code: "https://github.com/seoldh99/uniphot"
+keywords:
+  - astronomy
+  - photometry
+  - forced photometry
+  - PSF photometry
+  - GPU
+  - JAX
+references:
+  - type: software
+    title: "The Tractor: Probabilistic astronomical source detection and measurement"
+    authors:
+      - family-names: Lang
+        given-names: Dustin
+      - family-names: Hogg
+        given-names: David W.
+      - family-names: Mykytyn
+        given-names: David
+    year: 2016
+    url: "https://ascl.net/1604.008"
+    repository-code: "https://github.com/dstndstn/tractor"
+    notes: "Astrophysics Source Code Library, ascl:1604.008. Four pieces of uniphot are derived from The Tractor; see NOTICE."

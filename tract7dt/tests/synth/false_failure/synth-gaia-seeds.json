@@ -1,0 +1,30 @@
+{
+ "check_sha256": "6778b1476acde93dde1ed71e9cd96e194f7f4970b14111d3fc8bd066080102a1",
+ "created": "2026-10-10T03:22:35",
+ "generator_sha256": "aa555ce23684c059ff6ffd9cc796fba0a5e3a6ee3a1dfe547573c3b7be6b657e",
+ "n_fail": 0,
+ "n_repeats": 1000,
+ "normal_tail_rate": 0.0006906915509947715,
+ "note": "unit 0.3 after review_0.3 fixes (B1-B4)",
+ "rate": 0.0,
+ "rate_upper95": 0.002991249545095295,
+ "seconds": 0.121,
+ "seed0": 20261010,
+ "stats": {
+  "frac_abs_gt3": {
+   "hi": 0.01,
+   "lo": 0.0,
+   "mean": 0.0026257500000000005,
+   "sd": 0.0008209283530618618,
+   "tail": 0.0006906915509947703
+  },
+  "pull_rms": {
+   "hi": 1.1,
+   "lo": 0.9,
+   "mean": 0.9996331596363964,
+   "sd": 0.01134169949835091,
+   "tail": 1.2241694385376781e-18
+  }
+ },
+ "test_id": "synth-gaia-seeds"
+}

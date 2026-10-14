@@ -1,0 +1,28 @@
+# uniphot environment (import name tract7dt in 0.1).
+#
+#     conda env create -f environment.yml
+#     conda activate uniphot
+#
+# No C/SWIG/Cython build: the vendored Tractor and its build dependencies
+# (astrometry, cfitsio, eigen, ceres-solver, suitesparse, swig, cython,
+# cxx-compiler) were removed with the CPU/Tractor path.
+name: uniphot
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy >=1.17.1       # 1.17.0 has an LSQR convergence regression; 1.17.1 fixes it.
+  - astropy
+  - sep                  # SEP detection (PSF stars, bright mask, residual specks)
+  - photutils
+  - pandas
+  - matplotlib
+  - pyyaml
+  # GPU compute (the only path). The cuda12 jaxlib build pulls in the CUDA
+  # runtime libraries; only the NVIDIA driver is needed on the host.
+  - jax >=0.9.0          # 0.4.34 lacks jax.enable_x64 (used by the memory probes); tested 0.9.0 and 0.11.2
+  - jaxlib=*=*cuda12*    # CPU-only (tests): drop the build pin.
+  - pip
+  - pip:
+      - -e .

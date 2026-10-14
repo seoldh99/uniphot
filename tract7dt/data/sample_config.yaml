@@ -1,0 +1,289 @@
+# tract7dt sample configuration
+
+# Must-change parameters:
+# - ALL inputs.*
+# - outputs.work_dir
+
+# Absolute paths are allowed for all path-like parameters.
+# Relative paths will be resolved against the directory of the config file.
+# But! For outputs.* except outputs.work_dir, their relative paths will be resolved against the outputs.work_dir.
+
+# If one or some parameter lines are missing, the pipeline will use the default values stored in the config.py file.
+# This sample config file contains every parameter of DEFAULT_CONFIG in config.py.
+# Keys retired in uniphot 0.1.0 (CPU/Tractor path, compute.mode, psf.mode, removed opt-ins) are accepted with a note
+# when they hold the value of the unreleased tract7dt dev8 (or are inert), and rejected otherwise -- see _RETIRED_KEYS in config.py.
+# Also rejected: compute.gpu.framework (any value), and compute.mode next to a compute.gpu block that has
+# per-patch keys (e.g. devices) but none of grid/psf/background/solver/positions (the old per-patch layout).
+
+inputs:
+  tile_name: "your_tile_name"                      # Informational tile name. Does not affect the pipeline.
+  input_catalog: "path/to/input_catalog.csv"       # Path to input catalog CSV file with ID/RA/DEC/TYPE, optional FLUX_{band}/ELL/THETA/Re.
+  image_list_file: "path/to/image_list.txt"        # Path to input image list txt file; one FITS path per line; blank lines and # comments allowed.
+  gaiaxp_synphot_csv: "path/to/gaiaxp_synphot.csv" # Path to GaiaXP synphot CSV file for this tile.
+
+outputs:
+  work_dir: "path/to/work_dir"         # Path to base work & output directory.
+  cropped_images_dir: "cropped_images" # Path to PNGs from crop diagnostic plots.
+  overlay_dir: "overlay"               # Path to white_overlay*.png plots.
+  final_catalog: "output_catalog.csv"  # Path to Merged catalog output.
+
+image_scaling:
+  zp_ref: 25.0                         # Reference ZP for scaling.
+  mask_zero_coverage: true             # No-coverage masking. Coadders mark "no exposure here" either with NaN (caught by the finiteness test) or with an exact 0.0 fill; the latter is invisible to that test, so those pixels enter the fit as ordinary sky and sources standing on them are measured against nothing -- multiple magnitudes too faint with fracmasked 0.0000 and fit_is_reliable True (measured on 7DT coadds: 11-24% of a tile's sources carry >=1 such band, paired median vs DECaPS2 1.3-2.1 mag too faint, worst sub-population 3.8 mag; the coadd footprints are band-dependent and ragged, so no rectangular crop fixes it). true (default): a pixel is no-coverage iff it is BOTH a border-connected exact zero AND outside the data's own envelope (the orthogonally convex hull of the non-zero pixels -- never the bounding box, which a rotated footprint collapses to the whole frame). The intersection IS the rule: no threshold and no tuned constant anywhere, and percolation on zero-common products is handled by construction. Interior zeros are left alone, so a product whose zeros are real data is untouched. false => pre-fix behaviour, byte-identical.
+
+crop:
+  enabled: true                        # Crop away noisy edges. (the cropping itself; the two plot_* keys below only affect diagnostic PNGs)
+  margin: 100                          # Crop margin in pixels (100 is the setting used in the development measurements).
+  # Pre-EPSF diagnostic PNGs default ON. Their matplotlib savefig is
+  # dispatched to the background plot pool (see performance.background_plotting
+  # below), so they don't block the next pipeline stage.
+  plot_pre_crop: true                  # Save pre-crop white image with crop box.
+  plot_post_crop: true                 # Save post-crop white image.
+  display_downsample: 4                # Downsample for pre-crop plot (only when plot_pre_crop: true).
+  post_crop_display_downsample: 4      # Downsample for post-crop white plot (only when plot_post_crop: true).
+
+overlay:
+  # Full-frame white+catalog overlay PNG; saved in the background so it
+  # doesn't block the rest of load_inputs / augment_gaia.
+  enabled: true                        # Save white_overlay.png with catalog markers.
+  downsample_full: 4                   # Downsample factor for white_overlay.png.
+  zoom_enabled: true                   # Save white_overlay_zoom.png for a pixel-region cutout (only when overlay.enabled: true).
+  zoom_box: [4000, 5000, 4000, 5000]  # [x0, x1, y0, y1] in current working white-frame pixels (post-crop if crop enabled, full-frame if crop disabled).
+
+checks:
+  require_wcs_alignment: true          # Enforce WCS alignment across input images.
+  wcs_tolerance:
+    crval: 1.0e-6                      # Tolerance for CRVAL (deg).
+    crpix: 1.0e-6                      # Tolerance for CRPIX (pix).
+    cd: 1.0e-9                         # Tolerance for CD/PC matrix.
+    cdelt: 1.0e-9                      # Tolerance for CDELT (deg/pix).
+  require_same_shape: true             # Enforce same array shape for all images. Should be true.
+
+source_saturation_cut:
+  enabled: true                        # Per band: a source within radius_pix of a saturated pixel has THAT band excluded (NaN, FLAGS bit 8); excluded_saturation=True (dropped from the fit) only if every band is affected.
+  radius_pix: 20.0                     # Radial search size [pix] around source position.
+  saturation_divisor: 1.3              # Pixel saturation threshold = SATURATE / divisor. 1.0 = use SATURATE directly; 2.0 = flag at 50% of SATURATE.
+
+bright_mask:
+  enabled: true                        # Mask bright sources detected on the white stack that are not in the input catalog.
+  thresh_sigma: 5.0                    # SEP detection threshold [sigma] on white stack.
+  minarea: 20                          # SEP minimum detection area [pix].
+  deblend_nthresh: 32                  # SEP deblending sub-thresholds.
+  deblend_cont: 0.005                  # SEP deblending contrast.
+  clean: true                          # SEP source cleaning.
+  clean_param: 1.0                     # SEP cleaning parameter.
+  match_radius_pix: 3.0                # Radius [pix] for matching SEP detections to active catalog sources.
+  ellipse_scale: 3                     # Scale factor applied to SEP ellipse (a, b) for mask geometry.
+  min_radius_pix: 6.0                  # Minimum mask radius [pix] even for compact sources.
+  dilate_pix: 1                        # Binary dilation [pix] applied to final mask.
+  mask_radius_mode: "physical"         # DEFAULT (validated on full 7DT fields). "physical": mask out to where flux*PSF(r) > physical_nsigma * local noise (propagated wing-vs-noise radius, no tuned geometric constants; ellipse_scale/min_radius/dilate ignored; falls back to "ellipse" without a from_stars PSF). "ellipse": legacy geometric mask.
+  physical_nsigma: 1.0                 # Surface-brightness significance for mask_radius_mode="physical" (principled, not tuned).
+  model_unmatched: false               # Route unmatched bright detections into the island fit as DET ("model the wings") instead of masking; keeps previously-masked neighbours fittable. Off => byte-identical.
+  subtract_unmatched_mode: "s1"        # DEFAULT "s1". How routed detections are handled (only with subtract_unmatched). "sequential" (v1): per-detection PSF forced flux subtracted one by one at the island stage -- ORACLE-MEASURED NET-NEGATIVE (under-subtraction residuals inflate the L2 background: paired truth stars +16->+58 mmag, ZP mad x1.9 worse 20/20 bands); kept for A/B only. "s1" (v2): routed detections become flux-only STAR columns of the pass-1/pass-2 S1 JOINT solves (fluxes+background self-consistent; G1 guard: never fixed-flux pre-subtraction), forced-singleton islands (never joint-fit with real sources), scene-subtracted like any non-member STAR, and DROPPED from the output catalog (ID prefix sub_). Footprint protection demotes phantoms attributable to a cataloged galaxy's own light (post-S1; demoted = no subtraction + excluded from the final flux solve).
+  unmatched_population: "stars"        # USER DECLARATION of what this field's catalog-unmatched detections ARE (star/galaxy separation at detection-limit significance is classically unreliable, so this is deliberately NOT an automatic classifier; the on/off gate is subtract_unmatched alone -- this knob never silently disables the feature). "stars" (bulge / low-latitude fields): detections modeled/subtracted as point sources (the oracle-validated case). "extended"/"mixed" (deep extragalactic fields): a dedicated extended treatment is PLANNED but not yet implemented -- currently FALLS BACK to point-source modeling with a loud warning; measured caveat (UDS): heavy photometry-churn tail (40% of sources move >10 mmag) -- for deep extragalactic fields keep subtract_unmatched OFF.
+  subtract_unmatched: true             # DEFAULT ON ("subtract, don't mask" PROMOTED in its v2/"s1" form). Unmatched bright detections whose above-noise wing extent (the physical mask radius) fits INSIDE the from_stars PSF stamp's modelable radius are NOT masked -- they are handed to the island stage's subtract-only pass (PSF forced flux, subtracted field-wide, never fit; footprint protection applies). Wings beyond the stamp keep the mask (a 55px stamp cannot subtract what it cannot model); saturated cores stay masked by the per-band saturation mask regardless. Derived split, no new constants. Motivation (star-injection test): masking an uncataloged star ANNIHILATES nearby galaxy fits (29% of contaminated targets lost; 47% within 4 FWHM at snr>=30) -- mask collateral, not wing bias, is the dominant incomplete-catalog harm. Requires gpu + island + scene_subtract (else falls back to masking + warns). Mutually exclusive with model_unmatched. Off => byte-identical.
+  save_overlay: true                   # Diagnostic full-frame overlay PNG. Dispatched to the background plot pool so it doesn't block the EPSF stage; the FITS bright mask is always written either way.
+
+logging:
+  ignore_warnings: true                # Suppress Python warnings.
+  level: "INFO"                        # Python logging level: DEBUG/INFO/WARNING/ERROR.
+  file: "auto"                         # "auto": write to {work_dir}/{command}.log (e.g. run.log, merge.log). Explicit path: resolve relative to work_dir. null: console only.
+  format: "%(asctime)s | %(name)s | %(levelname)s | %(message)s"  # Log line format.
+
+plotting:
+  dpi: 150                             # DPI for all diagnostic PNG plots. Matplotlib rasterization scales ~DPI^2, so 300 takes ~3-4x longer and produces ~4x larger files for no science benefit. Bump only when you specifically need very high-res output.
+
+performance:
+  # Both honored up to cpu_count, with a per-stage natural cap on top:
+  #   - frame_prep_workers caps at the number of FITS frames (one task per frame).
+  #   - white_stack_workers caps at the number of row chunks; the chunking
+  #     adapts to the requested worker count, so 32 workers actually run
+  #     32 chunks in parallel. "auto" resolves to cpu_count.
+  frame_prep_workers: 32               # Workers for per-frame loading/preparation in load_inputs ("auto" = cpu_count, or integer).
+  white_stack_workers: 32              # Workers for white-stack row-chunk accumulation ("auto" = cpu_count, or integer).
+  # Pre-EPSF stages (load_inputs, bright_mask, zp.augment) emit a few
+  # full-frame diagnostic PNGs whose results are write-only - no
+  # downstream stage reads them. With background_plotting on, those
+  # savefigs are dispatched to a small thread pool and the next
+  # pipeline stage starts immediately. The pool is drained at pipeline
+  # end, so the on-disk output is identical to the synchronous path.
+  background_plotting: true            # Save pre-EPSF PNGs in a background thread pool.
+  background_plot_workers: 4           # Pool size for background plot saving.
+
+
+compute:
+
+  gpu:                                 # Settings of the GPU grid path, the only engine path (do not add the retired compute.mode).
+
+    # ---- JAX runtime ---------------------------------------------------
+    devices: "auto"                    # "auto" -> all CUDA devices visible to JAX. Or an explicit list, e.g. [0, 1, 2, 3]. Workers stripe round-robin (one grid worker per device).
+    mem_fraction: 0.5                  # Per-grid-worker XLA mem fraction. 0.5 = ~12 GB on a 24 GB card. Largely ignored when XLA_PYTHON_CLIENT_ALLOCATOR=platform (auto-set in worker init).
+    jit_cache_dir: "auto"              # JAX persistent JIT cache. "auto" -> ~/.cache/tract7dt/jax_jit_cache_grid. null disables.
+
+    # ---- Adaptive worker packing ---------------------------------------
+    workers_per_gpu: "auto"            # Grid-worker PROCESSES per GPU. "auto" (default): probe free GPU mem at runtime and pack the most workers that fit the estimated per-grid peak -- safe on any GPU size / image (large grids on 24 GB -> 1/GPU; small grids or big GPUs -> pack). An int forces the count. Packed workers get a hard per-worker BFC memory cap; any grid that still OOMs is retried 1/GPU (results stay bit-identical).
+    use_mps: true                      # Use NVIDIA MPS while packing (>1 worker/GPU) for CONCURRENT multi-process GPU kernels (vs time-slicing). Private per-user daemon, auto-started only while packing and stopped after; graceful no-op if MPS is unavailable or at 1 worker/GPU.
+
+    # ---- Image grid layout ---------------------------------------------
+    grid:
+      n_rows: 2                        # Image is split into n_rows x n_cols quadrants; each quadrant runs on its own GPU worker.
+      n_cols: 2                        # 2x2 = 4 grids fits perfectly on 4 GPUs.
+      halo_pix: 30                     # Halo width [pix]. Sources whose center falls in a NEIGHBOR grid's halo are included in this grid's forward model so PSF-tail flux at boundaries is captured. ~half the 55-px PSF stamp.
+      max_sources_per_grid: 1500       # Auto-refine n_rows/n_cols when a large crop would put more than this many owned sources in one grid. Set null to force the explicit grid.
+
+    # ---- PSF model -----------------------------------------------------
+    psf:
+      stamp_size: 55                   # PSF stamp size [pix].
+
+      # mode="from_stars" parameters (active only when mode=from_stars).
+      from_stars:
+        wing_from_median: true         # Replace model wings beyond ~2.5xFWHM with the pixelwise MEDIAN of training stamps (blended, integral preserved). The LSQ stack inherits the MEAN of sub-threshold neighbour contamination -- in crowded fields a false wing pedestal ~10x the true wing that one-sidedly depresses faint-source fluxes (a crowded 7DT field: tail -53%). false = exact earlier model.
+        # Env escape hatches for the fit-quality fixes (all default ON):
+        #   TRACT7DT_RENDER_STAMP_RENORM=0  - disable unit-sum renorm of rendered stamps
+        #   TRACT7DT_RENDER_STAMPS_JIT=0    - eager (legacy) stamp rendering path
+        polynomial_order: 4            # Spatial polynomial order. Parameter-sweep winner on a 7DT field. Quartic = 15 spatial terms. Supported: 0..5.
+        thresh_sigma: 5.0              # SEP detection threshold. Parameter-sweep winner on a 7DT field: 5 sigma balances candidate count vs detection purity for tightest zp_err_std. Lower to 3 in low-density fields; raise to 10 if SEP-detection is a bottleneck.
+        minarea: 25                    # SEP minimum detection area [pix].
+        deblend_nthresh: 32            # SEP deblending thresholds.
+        deblend_cont: 0.005            # SEP deblending contrast.
+        sample_variability: 0.2        # PSFEx SAMPLE_VARIABILITY default. Used by auto-FWHM mode finder.
+        min_snr: 20.0                  # PSFEx SAMPLE_MINSN default. Per-star min SNR: the PSF training-star pool (training stars = SEP detections paired with GAIA_SOURCE_ID rows passing RUWE <= zp.gaia_max_ruwe; no ellipticity or separation cut).
+        max_stars_per_band: 5000       # Hard cap on stars per band (highest-SNR kept).
+        cutout_size: 61                # Per-star cutout size [pix] (padded for sub-pixel centering).
+        psf_size: 55                   # Final PSF model stamp size.
+        edge_pad: 10                   # Min distance from image edge for star selection.
+        centering_method: "gw_centroid"  # Sub-pixel star centring algorithm. "gw_centroid" (default, ~100x faster): vectorized iterative Gaussian-weighted centroid (SExtractor WIN-moments style). "epsfbuilder" (legacy, slow): photutils EPSFBuilder centres. Both register the stamps with the same Fourier sub-pixel shift (M2 unit a.3), so "epsfbuilder" no longer reproduces pre-Apr-2026 outputs.
+        recenter: true                 # EPSFBuilder-style iterative sub-pixel recentering. Only consumed when centering_method="epsfbuilder".
+        recenter_boxsize: 9            # Recentering window [pix]. Only consumed when centering_method="epsfbuilder".
+        recenter_maxiters: 30          # Max recenter iterations per star. Only consumed when centering_method="epsfbuilder".
+        sigma_clip: 5.0                # Per-star sigma-clip threshold. Only consumed when centering_method="epsfbuilder".
+        star_local_bkg_subtract: true  # Subtract per-star local background annulus before stacking.
+        star_local_bkg_annulus_rin_pix: 20.0
+        star_local_bkg_annulus_rout_pix: 30.0
+        star_local_bkg_sigma: 3.0
+        star_local_bkg_minpix: 30
+        max_outer_iters: 4             # PSFEx-style outer kappa-sigma rejection iterations on the polynomial fit.
+        kappa: 3.0                     # PSFEx psf_clean default.
+        max_workers: "all_bands"       # Parallel band-builder processes. "all_bands" (default) -> N bands at once (~14 GB extra for 18 bands). Drop to a small int (e.g. 4) on RAM-constrained hosts; "auto" = n_cpus // 8.
+        save_diagnostics: true         # Save per-band PSF residual PNG montage + stars.csv + summary.json.
+        wing_blend_start_fwhm: 2.5     # Radius (x FWHM) at which wing_from_median starts replacing the model wing with the training-stamp median.
+
+
+    # ---- Background model ----------------------------------------------
+    background:
+      poly_order: 1                    # 2-D bg polynomial order. 1 = linear plane (3 terms). Parameter sweep on a 7DT field: bg=1 ties for best zp_err_std AND is fastest. Increase only if your bg has obvious large-scale structure beyond a plane.
+
+    # ---- LM solver -----------------------------------------------------
+    solver:
+      single_stage: false              # [IGNORED under position_solver: island; applies to auto/per_source/joint_* only] false (default): classic 3-stage fit (S1 frozen pos -> S2 1 pos step -> S3 alternating joint loop), mirroring CPU mode. true: skip S1+S2, joint LM only (faster but less robust).
+      n_opt_iters: 20                  # [IGNORED under position_solver: island; applies to auto/per_source/joint_* only] Max outer iterations of the joint LM loop (S3, or the only stage when single_stage=true). Sweep showed 20 is enough for 7DT images.
+      dlnp_stop_pix: 0.1               # [IGNORED under position_solver: island; applies to auto/per_source/joint_* only] Convergence: stop when max position update across all sources < this many pixels. Parameter sweep on a 7DT field: 0.1 gives identical ZP to 1e-3 but ~30% faster.
+      pos_stop_unconverged_frac: 0.002 # [IGNORED under position_solver: island; applies to auto/per_source/joint_* only] S3 quantile stop (default): declare position convergence when <= floor(frac*n_sources) sources still step above dlnp_stop_pix (ceil for grids containing extended sources, so small grids may tolerate 1 straggler); stragglers are flagged per source in the position_stranded catalog column. Arbitrated against Gaia + aperture photometry on a crowded 7DT field: the early-stopped solutions are MORE accurate for the affected (blend-degenerate) sources, and ~25% of fit walltime is saved. 0 = exact legacy. NEVER emulate via n_opt_iters (poisons fit_is_reliable for whole grids).
+      chi2_ftol: 0.1                   # [IGNORED under position_solver: island; applies to auto/per_source/joint_* only] dlnp-style per-source ftol (extended-source Newton path only): a source whose best chi^2 improves by < this on two consecutive S3 iterations counts as CONVERGED even if its parameter steps still oscillate (flat/multimodal chi^2 terrain). Statistically meaningful (delta-chi2=1 ~ 1 sigma). 0 = step-criterion only. Star-only grids unaffected (bit-compat).
+      pos_step_max_pix: 0.5            # [IGNORED under position_solver: island; applies to auto/per_source/joint_* only] Per-iteration position step clipped to +/- this many pixels. 0.5 avoids overshoot for faint sources near bright neighbours; raise toward 1.0 for fewer iterations on isolated bright sources.
+      position_solver: "island"        # "island" (DEFAULT, production): island-architecture joint fit -- per-grid S1 seed solve, then FIELD-level flux-aware island decomposition + independent per-island joint VarPro-LM fits (vmapped per bucket, one GPU), then a per-grid S1' final flux solve at the converged parameters; replaces the per-grid S2/S3 stages, and is the ONLY solver that emits the reliability/quality columns (rchisq/fracflux/fracin/fracmasked, the param-error columns, FLUXERR_MARG_*, island_id/island_nsrc/island_giant/island_stalled). Made default after the re-audit found island >= auto on every solver-isolable axis (tighter galaxy scatter, fewer >30% flux outliers; star bulk unaffected). See the island block below. ALTERNATIVES (opt-in): "auto" (the earlier default; resolved PER GRID -- grids containing extended sources (EXP/DEV/SERSIC) use "joint_varpro", star-only grids use "per_source" bit-gated vs the legacy baseline); "per_source" (fast per-source Newton, forces one solver for every grid; use for star-only-optimized or legacy-bit-compat runs); "joint_varpro" (joint flux-position-shape[-n] variable-projection step forced on every grid); "joint_lsqr" (preconditioned-CG joint position/shape solver, experimental).
+      joint_cg_max_iters: 20           # Experimental joint solver only: max CG iterations per LM step.
+      joint_cg_tol: 1.0e-6             # Experimental joint solver only: CG residual tolerance.
+      joint_use_preconditioner: true   # Experimental joint solver only: enable diagonal preconditioner.
+      island:                          # Island solver knobs (used only when position_solver: island).
+        kappa: 0.5                     # Coupling threshold (units of sigma_sky): source i couples out to the radius where flux_i * profile_i(r) drops below kappa*sigma_sky (floor: PSF FWHM; cap: geometric stamp-overlap radius). Locked at 0.5 by the island-arch truncation audit (worst dropped coupling 0.21 sigma on a crowded 7DT bulge field).
+        max_steps: 30                  # Max LM steps per island; islands still moving after this many are reported unconverged (opt_hit_max_iters / position_stranded).
+        max_steps_main: 8              # Difficulty re-queue: chunks run at most this many LM steps in the wide main pass; islands neither converged nor stalled continue in compact narrow "hard" chunks for the remaining max_steps budget (exact LM-state carry-over). Most islands converge in 2-7 steps, so they stop paying for 30-step stragglers. 0/null disables (legacy single-pass).
+        joint_nsrc_cap: 32             # Islands with more members than this skip the joint nonlinear fit and take the giant path (island_giant=true; positions/shapes stay at seeds, the final pass measures the fluxes).
+        star_render_split: true        # In a MIXED island (stars + galaxies), render STAR members via the cheap PSF-eval + Lanczos path and only galaxies via the table-MoG FFT -- kills the wasted 512-pad FFT every star lane rendered then discarded (2.2-2.6x faster on the dominant mixed buckets). Placed stamp is byte-identical per island, but the narrower galaxy-FFT vmap shifts XLA's batched reduction order at the ulp level (SAME chunk-width fp-noise class this solver already carries: < 1 sigma, no systematic bias). false: the earlier single-N-wide render (byte-reproducible; pair with TRACT7DT_POS_STEP_CHUNK=0 for a strictly bit-exact island run).
+        step_mode: "clip"              # LM inner-step geometry (static, kernel-cache-keyed). "clip" (default): byte-identical legacy damped-Newton + fixed per-param clip + lambda x10 escalation. "trust_region": parameter-free scaled-dogleg trust region (radius from the chi2 gain ratio; Nocedal-Wright Alg 4.1 constants, not dataset-tuned) -- removes the fixed-clip stall artifact + converts the ping-pong-reject island_stalled population into clean convergences + is deterministic. ROBUSTNESS/DETERMINISM/STALL-CONVERSION ONLY, NOT an accuracy fix: on a displaced-min valley (crowded ambient light) it reaches the wrong minimum FASTER; bound-pinned rows are disclosed via island_railed (never gates fit_is_reliable). STAR-only classes stay "clip". Off => byte-identical.
+        scene_subtract: true           # SCENE SUBTRACTION (root accuracy fix). DEFAULT true (STAR-only). Crowded free-n railing is fit-set INCOMPLETENESS: bright CATALOGED neighbours placed in ADJACENT islands leak unmodeled wing light into a target's island cutout, displacing its chi2 min (Re/n rail). Fix = render every NON-member cataloged STAR at its S1 (seed) flux and subtract it from each island cutout so the joint fit sees only its own members + noise (STAR-only: a point source is exactly modelable from catalog+S1; extended non-members at seed shape inject artifacts, left to the joint fit / iteration). Implemented as the exact equivalent "subtract-all-STAR-at-S1 field-wide, add-back own STAR members in-kernel" (each source is a member of exactly one island; members keep TRUE data light, non-members removed). No tuned constants (S1 flux + catalog only; sensitivity forgiving to +/-30% flux error), NON-circular (never uses the untrusted free-n fit), grid-free field pass. VALIDATED: full-field crowded 7DT net WIN (n-rail 41->9, island_stalled -37%, fit_is_reliable +970, flux toward truth); sparse UDS do-no-harm (91% bit-identical). false => path skipped, output byte-identical to pre-scene-subtract.
+        blank_response_correction: true # Blank-response (empty-aperture) median flux-bias correction (DEFAULT ON; classical deep-photometry precedent). Measures the matched-filter response a phantom source would see at blank positions of the FINAL pass-2 residual (response map over the whole band, median over good pixels) and subtracts it from every flux -- removes the additive ambient-skew bias (~+2 ADU faint-star deficit measured) of WHATEVER estimator actually ran (plain L2 or confusion_weight; deficit or over-correction alike). Derived, no tuned constants; STAR rows only (the PSF-template response is exactly a point source's bias; measured to move extended sources' different net systematics the wrong way); pass-2 reported fluxes only. false => byte-identical.
+        stall_count_mode: "proposals"  # How rejected LM steps count toward the 4-reject stall detector (island_stalled). "proposals" (default, legacy): every reject counts -- measured caveat: after a long accept run lambda has bottomed at ~1e-9 and the raw Newton step is far beyond the per-step clips, so the x10 lambda escalation cannot change the clipped proposal and the 4 rejects test ONE step (the island_diverged column discloses exactly this class). "changed" (opt-in semantic fix): a reject counts only if the clipped proposal DIFFERS from the previously rejected one; identical-proposal rejects keep escalating lambda without counting, so the solver eventually tests genuinely smaller steps. CAUTION (measured, crowded 7DT bulge field): in crowded fields the extended-source chi2 minimum can be genuinely DISPLACED by uncataloged ambient light -- "changed" helps correct-valley islands but rides displaced-valley islands FURTHER into the wrong minimum; use only together with the island_diverged flag + FLUX_WIN columns (docs/outputs.md information-boundary note).
+        plateau_dlnp_tol: 0.5             # The dlnp tolerance of the post-hoc probability-convergence certificate on stalled islands (Tractor-style semantics; 0.5 <=> dchi2=1 = the 1-sigma single-parameter quantum, a convention not a fitted constant). Derives the SOFT island_plateau disclosure from the always-emitted island_stall_dchi2 column host-side; never recompiles kernels; fit_is_reliable untouched. (Under convergence: "dlnp" the same constant also becomes the in-loop quantum 2*tol, baked into the compiled step program.)
+        convergence: "legacy"          # In-loop convergence criteria of the island LM step program (static, kernel-cache-keyed). "legacy" (default): the byte-identical pre-dlnp criteria (relative ftol 1e-4*chi2 on 2 consecutive accepts; fixed 0.1px/0.01 step tolerances; 4-consecutive-reject stall; float32 chi2 carry). "dlnp" (opt-in, science-affecting -- needs its own truth validation): (1) chi2 accept test on a FLOAT64 carry (residual math stays f32) -- measured: the f32 accept test near an optimum is a coin flip on big islands (crossband wrong-rejects = 41% of rejects = the phantom-stall mechanism); (2) ftol prong ABSOLUTE: accepted dchi2 < 2*plateau_dlnp_tol (the island-size-independent 1-sigma quantum; the relative prong stopped chi2>1e5 islands still harvesting ~20 quanta/step); (3) step-tolerance prong fires only when the accepted step is also sub-quantum (bright-star exits were the largest measured leaked-descent channel); (4) rejects count toward the stall only when the proposal actually CHANGED (identical clip-pinned proposals keep escalating lambda), so a stall certifies K distinct dampings found no improvement; (5) reject-exits with no further information reachable terminate immediately (a reject tested AT the lambda cap, or a NO-MOVE proposal whose damped update rounds to zero against the f32 params -- every future proposal is provably bit-identical). EXIT-STATE MAPPING: every reject-exit gets the same post-hoc island_stall_dchi2 ladder certificate as legacy mode; certificate-PASSING exits are CONVERGED-ON-PLATEAU (island_plateau=True, NOT island_stalled -- under exact f64 accepts a finished island's natural terminal state is a reject run; measured: 95% of dlnp reject-exits certify at dchi2 ~ 0 with legacy-identical endpoints); certificate-FAILING exits stay island_stalled (honest stall, hard-fail default unchanged). Requires step_mode: "clip" + stall_count_mode: "proposals" (config load errors on either combo) + JAX x64 (production worker default).
+        blend_resolve:                   # Item-4 Layer-2 matched-blend countermeasure: an uncataloged point source within ~1 PSF FWHM of a cataloged source escapes the bright mask + phantom routing (its blend detection MATCHES the host's own catalog entry) and the joint fit absorbs it (host displaced toward the star, flux stolen, flags quiet). The star IS visible in the S1-STATE residual (positions frozen at seeds; oracle 46-150 sigma). For blend-suspect sources (rchisq above the flag convention AND fit-vs-seed shift above the run's median PSF core sigma), scan the S1-state residual (dmb minus extended-source seed-shape S1 models) with the run's own noise map. Gates all derived: peak >= nsigma x local noise, separation > PSF core sigma (on-core columns are host-flux-degenerate -- measured), within the PSF stamp radius. BIC/delta-chi2 measured-FAIL as junk gates -- detection significance IS the gate. Requires scene_subtract. enabled=false skips the whole path -> byte-identical.
+          enabled: false                 # OFF by default (Layer-2 in staged rollout).
+          mode: "detect"                 # "detect": disclosure dry-run only (blend_candidates.csv, fit untouched). "resolve": additionally subtract each best candidate at its matched-filter flux, REFIT the affected islands from seeds (chi2 not-worse guard; accepted hosts tagged blend_resolved), and model the star as a solve-only pass-2 sentinel column (blend_resolved.csv; never a catalog row).
+          nsigma: 5.0                    # Candidate peak threshold in local white-noise units (conventional significance floor; 8 misses the weakest measured silent case).
+          minarea: 5                     # SEP minarea on the residual cutout (target is a PSF core).
+
+    # ---- Position priors -----------------------------------------------
+    positions:
+      default_pos_err_pix: 1.0         # POS_ERR fallback when the input catalog row has no POS_ERR (or POS_ERR is non-finite/non-positive).
+      pos_max_shift_pix: 5.0           # Hard position bound +/- this many pixels from the input catalog seed.
+
+    # ---- Extended-source (galaxy) model ---------------------------------
+    galaxy:
+      render_backend: "auto"           # "auto" (default): star-only catalogs keep the historical direct path (bit-identical); catalogs with EXP/DEV/SERSIC sources use "fft" -- the analytic-total-flux renderer (closed-form Gaussian-mixture FT x FFT of the pixelized PSF; exact pixel integration; fixes the large-Re flux-truncation and cuspy-core biases). "direct" = earlier path (STAR+EXP only, regression/A-B use).
+      fit_sersic_n: true               # Stage-2 free-n (varpro grids only): fit the Sersic index of TYPE=SERSIC sources jointly with position+shape via a smooth logit bijection onto (0.29, 6.3). Rows below the S/N gate keep their catalog seed (sersic_n_frozen=True in the output). DEV/EXP always keep their profile-defined n.
+      n_fit_min_snr: 30.0              # Free-n S/N gate: per-band-median flux S/N (|F|/sqrt(F_var) from the S1 linear solve) required to free a SERSIC row's n. Faint free-n fits are unconstrained (AstroPhot cross-fits pinned at the bounds), so keep this >= ~30.
+      wing_peeling: true               # Wing peeling for large galaxies (DEFAULT ON): subtract per-band wing images (flux x [221px-tier render minus native 55px render]) of the few big sources (nre(n)*Re > half the native stamp, capped at wing_peel_max_sources) from the data before every solve; the solver machinery stays at the native stamp. Recovers the -10..-14% Re>=16px flux bias and most of the cuspy free-n bias without the OOM-prone whole-grid stamp promotion.
+      wing_peel_tier: 221              # Render-box size (px) for the wing image.
+      wing_peel_max_sources: 64        # Per-grid cap on peeled sources (largest by nre*Re are kept).
+      stamp_tiers: []                  # EXPERIMENTAL big-galaxy stamp ladder (e.g. [55, 111, 221]): promotes grids whose sources need a bigger render box (~4-8 Re). Default disabled -- known Re>=16px flux bias of -10..-14% with the native stamp; the big-tier path needs a memory-aware bucketing pass (OOM risk on dense grids) before becoming default.
+
+
+    # ---- Post-solve error model ------------------------------------------
+    error_model:
+      confusion_enabled: true          # Measure per-source CONFUSION noise from the run's own residual map (matched-filter excess variance in a local annulus; no tuned constants) and add FLUXERR_CONF_{band}_fit + FLUXERR_TOT_{band}_fit columns. FLUXERR_* is unchanged (marginal statistical error of the linear solve); in sparse fields the term is dormant (FLUXERR_TOT ~= FLUXERR). false: skip the measurement + omit both column families.
+      correlated_noise_enabled: true   # Measure the per-band CORRELATED-COADD-NOISE variance-inflation factor F_corr and apply it ONLY to the GEOMETRIC (pos/shape/n) errors (the flux error budget is the confusion term's). F_corr is measured from each coadd's source-free sky / model-subtracted residual (PSF-autocorrelation-weighted 2-D autocorrelation; zero tuned constants) and ACCEPTED only when its ACF SHAPE is resampling- not confusion-consistent (a confusion-shaped ACF -> F_corr=1.0; this replaced the retired raw >15 magnitude cut, which let a crowded bulge field's 9-14 through). Written as SEPARATE sqrt(F_corr_eff)-scaled columns {x,y}_pix_white_err_corr / Re_err_corr / ELL_err_corr / THETA_err_corr / sersic_n_err_corr. FIT weights + fitted VALUES + raw *_err + ALL flux columns are UNCHANGED. false: skip the measurement + omit every *_err_corr column (existing columns byte-identical).
+      chi2_nu_enabled: true            # Rescale the GEOMETRIC errors by sqrt(max(1, chi2_nu_nl)), the per-island joint chi2/dof from the island fit's OWN residual with MARGINAL (sky-only) per-pixel variance (no flux chi2_nu -- removed in a later re-scope). chi2_nu ~1 under pure correlated noise (no double-count with correlated_noise_enabled) and inflates on confusion + model mismatch. Combined MULTIPLICATIVELY with correlated_noise_enabled into nonlinear *_err_tot columns + diagnostic chi2_nu_nl. Raw *_err and ALL flux columns (incl. FLUXERR_CONF/TOT) are UNCHANGED. NOTE: validation on a crowded 7DT bulge field shows the flexible fit absorbs crowded geometric confusion, so chi2_nu_nl~1 there -- a geometric-annulus confusion term is future work. false: omit every *_err_tot / chi2_nu_nl column (existing columns byte-identical).
+      param_errors_enabled: true       # Island nonlinear-parameter errors (position_solver: island only): one read-only evaluation of the flux-marginalized Gauss-Newton Hessian at each island's converged state; the diagonal of its inverse gives MARGINAL 1-sigma STATISTICAL errors -- x_pix_white_err / y_pix_white_err / Re_err / ELL_err / THETA_err columns + sersic_n_err for free-n rows (exact algebra, no tuned constants; background frozen per the island design; NaN where undefined: stars' shapes, frozen n, giant islands). false: skip the evaluation + omit the five new columns (sersic_n_err stays NaN); existing columns are identical either way.
+      source_metrics_enabled: true     # Per-source model-quality columns (position_solver: island only), legacypipe DR9 convention: rchisq (own-profile-weighted PER-SOURCE reduced chi2 -- sees model misfit at the individual source, unlike the per-island chi2_nu_nl), fracflux (neighbour-flux contamination), fracin (analytic-total flux inside the fitted stamp), fracmasked (model flux on masked pixels). One read-only band scan per island chunk at convergence; NaN for giants/off-island. Also emits the per-band FLUX_WIN_{band}_fit data-constrained window fluxes (disclosure: island per-band amplitude x unit-model window sum -- what the pixels actually constrained, vs the untruncated-total extrapolation in FLUX_{band}_fit). false: skip + omit the four metric columns and every FLUX_WIN_* column; the metric pass is READ-ONLY (does not enter the fit -- verified bit-exact), so existing columns are unchanged up to the pipeline's pre-existing run-to-run fp jitter.
+      marginal_flux_err_enabled: true  # SHAPE-marginalized flux error columns (position_solver: island only). The reported FLUXERR is the VarPro amplitude 1-sigma -- marginal over the flux block but CONDITIONAL on the freely-fitted extended-source shape/position, so it UNDER-covers low-S/N extended sources (the flux-shape covariance is the dominant missing term). true (default): the island stage propagates that covariance into the flux via the exact Schur increment (VarPro amplitude sensitivity dF/dtheta through the SAME flux-marginalized nonlinear covariance param_errors_enabled inverts; zero tuned constants) and emits ADDITIVE columns FLUXERR_MARG_{band}_fit (statistical) + FLUXERR_MARG_TOT_{band}_fit (+ F_corr*chi2_nu inflation + confusion; the honest total for SED fitting) and MAGERR_MARG*/MAGERR_MARG_TOT* from compute_zp. STAR rows have no free shape block -> increment 0 -> FLUXERR_MARG == FLUXERR bit-for-bit; existing FLUXERR / FLUXERR_TOT are UNCHANGED. false: skip the extra per-island evaluation + omit the columns (every existing column identical either way). Giants / off-island -> NaN.
+      rchisq_scale_marg_tot: true      # DEFAULT ON: scale FLUXERR_MARG_TOT by sqrt(max(1, per-source rchisq)) -- standard chi2-based error rescaling, no tuned constant. Fixes the measured stamp artifact where rows carrying rchisq 3-98 kept un-inflated TOT bars (full-field crossband truth gate: stamped silent-wrong |pull_TOT|>3 rows 29 -> 7 at median collateral x1.00-1.10). Requires source_metrics_enabled (without the rchisq column this is a no-op). false => the earlier FLUXERR_MARG_TOT, byte-identical.
+      source_poisson:                  # Source-Poisson error term (DEFAULT ON): adds FLUX/g_eff to FLUXERR_TOT / FLUXERR_MARG_TOT variance (REPORTING columns only, never the fit invvar -- deweighting bright pixels biases forced photometry, measured). g_eff = detected-electron equivalents per pixel unit OF THE DELIVERED IMAGE. UNIVERSAL HEADER CONTRACT: provide either (a) the gain_eff override map below, or (b) a GAIN/EGAIN keyword >5 meaning the delivered image's effective e-/ADU (standard products), or (c) for 7DT products the documented shims apply automatically (UDS-style GAIN=N*EGAIN; legacy gpPy EGAIN=(2/3)*N*g1 with FLXSCALE 0.01 dropped -> 1.5*EGAIN/0.01). MEDIAN combines pay the exact information tax (x1.348 at N=3, pi/2 asymptotic). Underivable bands are WARNED and skipped -- never guessed. Offline checks: UDS deep -- FLUXERR_TOT alone UNDER-covers bright stars (MAD-anchored 1.25 at snr1000) and +Poisson lands the dispersion ~calibrated (MAD 0.99; the term is NEEDED); shallow 3-frame coadds -- the 16 clean bands sit at-or-below their correlated-noise null once anchored (open residue: m400/m875 edge-band error model + a ~0.45 cross-band correlated floor = covariance DISCLOSURE gap, not a sigma deficit). Decisive on unscaled single exposures (gain ~1 e-/ADU instruments).
+        enabled: true                  # DEFAULT ON (exact forward physics is not an image-dependent policy; half-normal-anchor re-read: the term moves pulls TOWARD the correct 0.674 target in both measured regimes). false => byte-identical error columns.
+        gain_eff: null                 # Per-band override map {band: e-/native-ADU}; wins over all header derivation (the universal escape hatch for any instrument).
+      rchisq_flag_thresh: null         # Optional reliability flag: flag_high_rchisq = (rchisq > this) for fitted island rows. null (default) emits the metric COLUMNS with NO flag (legacypipe-style -- apply your own cut; avoids baking a survey-tuned constant into fit_is_reliable). Set e.g. 3.0 + merge.high_rchisq_reliability to enable a warn/fail contribution. Calibrate per field/depth.
+      slow_converge_flag: true         # Column-only soft quality flag, ISLAND solver only (column omitted for the legacy per-grid solvers -- their opt_niters is a single grid-level count, so a per-source test is meaningless): flag_slow_converge = the source's island did NOT converge within the solver's own fast MAIN-PASS budget and was re-queued, opt_niters > compute.gpu.solver.island.max_steps_main (fallback opt_niters >= max_steps when the re-queue is off). Uses the solver's OWN "fast converger vs straggler" boundary -- config-derived, NO truth-frozen iteration count (replaces the old truth-tuned slow_converge_niters: 12), robust to the field's convergence distribution. Does NOT change fit_is_reliable. false/null omits the column.
+
+
+# Two keys of the old per-patch block that the GPU path still reads (moving them is an output/config-contract change, M5).
+patch_run:
+  gal_model: "exp"                     # Default model if TYPE missing: "dev", "exp", "sersic", or "star".
+  re_fallback_pix: 3.0                 # Fallback Re when missing in catalog.
+
+
+merge:
+  island_stalled_reliability: "fail"   # How island-mode `island_stalled` enters fit_is_reliable: "fail" (default, hard-fail the flux-inflated stalled rows) | "warn" (fit_quality_issues tag only) | "ignore" (the earlier behaviour, no signal). No effect on CPU/legacy runs.
+  island_plateau_reliability: "stalled" # How PLATEAU-CERTIFIED stalls (island_plateau = Tractor-style probability-convergence certificate) enter fit_is_reliable. "stalled" (default) = follow island_stalled_reliability (the earlier behaviour, bit for bit). "converged" (opt-in; RECOMMENDED with island.confusion_whitening crossband): certified stalls treated as converged (soft "island_plateau" tag) -- crossband full-field gate: 84% certify, ~+4,131 reliable recovered, certified pool truth-clean at snr>=100 + star oracle; disclosed caveat: faint certified galaxies include displaced-valley plateaus.
+  island_giant_reliability: "fail"     # How island-mode `island_giant` enters fit_is_reliable (reason giant_frozen_geometry): "fail" (default, hard-fail giants whose position+shape are the frozen catalog seed) | "warn" (fit_quality_issues tag only) | "ignore" (no signal). No effect on CPU/legacy runs.
+  high_rchisq_reliability: "warn"       # How the flag_high_rchisq column (per-source rchisq > compute.gpu.error_model.rchisq_flag_thresh) enters fit_is_reliable: "warn" (default, fit_quality_issues tag only -- a high-rchisq flux is still a real measurement; a single rchisq cut is a MODEST discriminator) | "fail" (hard-fail) | "ignore" (no signal). No-op unless rchisq_flag_thresh is set.
+  blend_unresolved_reliability: "fail" # How a blend_resolve mode="resolve" UNRESOLVED host (a candidate star passed every detection gate but the repair refit was REJECTED) enters fit_is_reliable: "fail" (default -- positive evidence of an uncorrectable contamination; oracle-measured 0.5-2.5 mag wrong, worse than the island_stalled hard-fail bar) | "warn" (tag only) | "ignore" (no signal). No-op unless blend_resolve ran in mode "resolve" (column absent).
+
+zp:
+  enabled: true                        # Enable zero-point calibration using GaiaXP synphot sources.
+  inject_gaia_sources: true            # true: inject unmatched Gaia sources as new rows for ZP calibration. false: only match existing input sources against Gaia (add gaia_source_id, backfill FLUX) without injecting new rows.
+  gaia_mag_min: 4.0                    # Minimum phot_g_mean_mag for Gaia source selection (every GaiaXP source in the cropped image is a candidate, independent of the input catalog).
+  gaia_mag_max: 28.0                   # Maximum phot_g_mean_mag for Gaia source selection.
+  match_radius_arcsec: 3.0             # RA/DEC match radius for deduplication against input catalog.
+  clip_sigma: 3.0                      # MAD-based sigma clipping threshold for ZP computation.
+  clip_max_iters: 10                   # Maximum sigma-clipping iterations.
+  gaia_pos_err_mode: "propagate"       # POS_ERR policy for pipeline-injected Gaia calibrator rows. "propagate" (default): per-source width epoch-propagated from the Gaia DR3 astrometric errors (needs ra_error/dec_error/pmra_error/pmdec_error in the GaiaXP CSV; falls back to gaia_pos_err_pix when absent; sources without a PM solution get NaN = no prior). "fixed": constant gaia_pos_err_pix on every injected row.
+  gaia_pos_err_pix: 0.1                # Fixed ("fixed" mode) / fallback ("propagate" mode) position-prior width [pix] for newly injected Gaia sources. null=no prior.
+  gaia_pos_err_floor_mas: 0.0          # Optional systematic floor [mas] added in quadrature to PROPAGATED widths only (explicit user belief; never substitutes for a missing PM solution).
+  frame_tie_diagnostic: "off"          # Image<->Gaia FRAME-TIE field-level DIAGNOSTIC (replaces the reverted gaia_pos_err_frame_tie). NEVER modifies POS_ERR: position is data-defined/absolute, so its per-source error is the propagated Gaia width alone (gaia_pos_err_mode: propagate) and must NOT be back-measured against the Gaia seed. The coherent image<->Gaia offset (~50-70 mas on crowded fields) is a WHOLE-FIELD WCS / absolute-astrometry systematic, not a per-source error bar. "off" (default): measure nothing; POS_ERR pure-propagated. "measure": compute the coherent offset from the ZP calibrators' fit-vs-Gaia residuals, LOG it + write the sidecar <stem>.frame_tie.json for the record only (never read back into POS_ERR). Deprecated alias gaia_pos_err_frame_tie (any value -> off) is accepted with a one-time warning so old "auto" configs no longer silently modify POS_ERR.
+  plot_mag_lo: 10.0                    # Lower x-axis limit (GaiaXP AB mag) for ZP diagnostic plots.
+  plot_mag_hi: 20.0                    # Upper x-axis limit (GaiaXP AB mag) for ZP diagnostic plots.
+  plot_zp_offset: 0.25                 # y-axis half-range around ZP median for the constrained plot. The fullrange variant uses adaptive y-limits.
+  zp_err_method: "bright_std"           # MAGERR floor source. "bright_std" (default): std of high-SNR calibrators -- honest floor. "all_mad" (legacy): adds the all-kept MAD (inflated by faint calibrators) in quadrature to every MAGERR.
+  min_calibrator_snr: 20                # S/N floor for the calibrators that DEFINE the per-band ZP (median/clip/MAD set). 0 = legacy no-cut. Measured on a crowded 7DT field: ZP value shift <= 0.0013 mag, reported scatter -22% (faint calibrators carry photon noise + one-sided Gaia-XP crowding bias).
+  zp_err_snr_min: 100.0                 # Minimum SNR (FLUX/FLUXERR) for sources used to estimate per-band ZP error (std). Falls back to SNR/2, SNR/4, then MAD if too few (less than 10) sources.
+  save_gaia_overlay: true               # Diagnostic full-frame Gaia augmentation overlay PNG. Dispatched to the background plot pool so it doesn't block the bright_mask stage.
+  # ---- Spatially-varying ZP (ubercal-style flat/illumination refinement) ----
+  # A single scalar ZP per band leaves a position-dependent achromatic residual
+  # (flat/illumination/coadd), most significant in crowded/low-galactic-latitude
+  # fields (~0.015 mag RMS, ~16% of bright zp_err on a crowded 7DT bulge field).
+  spatial_zp_model: "poly"              # "poly" (DEFAULT: smooth 2-D polynomial ZP; corrects the real flat/illumination spatial pattern, validated on crowded+sparse fields; bands with too few calibrators fall back to scalar) | "scalar" (exact-legacy single ZP/band) | "per_grid" (per grid_id_fit median; cells with < spatial_zp_min_per_cell stars fall back to scalar).
+  spatial_zp_poly_order: 4              # Spatial polynomial order for spatial_zp_model: "poly".
+  spatial_zp_min_per_cell: 30           # Min Gaia stars per grid cell for "per_grid" (else scalar fallback).
+  # ---- Gaia-XP reference quality filter (DEFAULT ON) ----
+  # Drops blended/contaminated Gaia XP calibrators from the ZP DERIVATION (not
+  # injection/output). Needs `ruwe` + `phot_bp_rp_excess_factor` per calibrator:
+  # from the GaiaXP CSV (`tract7dt augment-gaia`), else the run's cache, else
+  # fetched from the Gaia DR3 archive before the fit (bounded); if they cannot be
+  # obtained the run fails before the fit. Self-targeting: ~0% removed in
+  # sparse high-|b| fields (no harm), ~30% in the bulge (improves zp_err ~14%).
+  gaia_quality_filter: true             # Exclude calibrators with RUWE > gaia_max_ruwe OR |C*| > gaia_cstar_nsigma * sigma_C*(G) (Riello+2021). Set false to disable (offline runs without the columns).
+  gaia_max_ruwe: 1.4                    # Max RUWE (astrometric quality) for ZP calibrators.
+  gaia_cstar_nsigma: 3.0                # Corrected BP/RP excess |C*| cut, in sigma_C*(G) units.
+  gaia_min_calibrators: 10              # If the filter would leave fewer than this, fall back to the UNFILTERED set for ZP.
+  catalog_write_workers: 8              # Performance only (NO science effect): width of the parallel, BYTE-IDENTICAL CSV writer for output_catalog.csv + the per-object ZP CSV. pandas to_csv is single-threaded float->str formatting; contiguous row-blocks format identically and concatenate exactly. 8 keeps writer+plots under a ~32-core budget; 1 = serial.
+  plot_workers: 0                       # ZP diagnostic-plot worker processes (co-critical with the catalog write). 0 = auto (= min(n_bands, 20)); an int forces the count. Identical PNGs -- only dispatch parallelism changes.

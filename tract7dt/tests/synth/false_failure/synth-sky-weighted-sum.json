@@ -1,0 +1,30 @@
+{
+ "check_sha256": "6778b1476acde93dde1ed71e9cd96e194f7f4970b14111d3fc8bd066080102a1",
+ "created": "2026-10-10T03:23:36",
+ "generator_sha256": "aa555ce23684c059ff6ffd9cc796fba0a5e3a6ee3a1dfe547573c3b7be6b657e",
+ "n_fail": 0,
+ "n_repeats": 300,
+ "normal_tail_rate": 0.00017661428405029778,
+ "note": "unit 0.3 after review_0.3 fixes (B1-B4)",
+ "rate": 0.0,
+ "rate_upper95": 0.009936081944457708,
+ "seconds": 55.197,
+ "seed0": 20261010,
+ "stats": {
+  "generator_formula_rel": {
+   "hi": 1e-12,
+   "lo": 0.0,
+   "mean": 2.220446049250313e-16,
+   "sd": 0.0,
+   "tail": 0.0
+  },
+  "var_ratio_z": {
+   "hi": 4.0,
+   "lo": -4.0,
+   "mean": 0.01890911823711476,
+   "sd": 1.0664102339569057,
+   "tail": 0.00017661428405029778
+  }
+ },
+ "test_id": "synth-sky-weighted-sum"
+}
