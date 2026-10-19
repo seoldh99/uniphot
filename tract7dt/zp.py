@@ -1743,7 +1743,7 @@ def compute_zp(
             # per-source limit (Fisher + #27 confusion via FLUXERR_TOT, or the
             # plain statistical FLUXERR when TOT is absent), replacing the
             # vacuous header UL5_5 -- which is an analytic white-noise function
-            # of SKYSIG that ignores confusion (Fable re-audit: <=3 mmag
+            # of SKYSIG that ignores confusion (an independent check: <=3 mmag
             # identity to 5*sqrt-of-that). Defined wherever the flux ERROR is
             # finite (incl. faint / non-detections at the forced position; no
             # flux>0 requirement), and NaN for masked / never-fit rows -- so

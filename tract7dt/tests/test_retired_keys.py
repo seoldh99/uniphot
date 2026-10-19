@@ -125,7 +125,7 @@ def test_user_mapping_is_not_modified(config, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# B-1 (a finding of the review of the CPU-path removal).
+# A finding of the review of the CPU-path removal.
 # tract7dt@dev8's _migrate_legacy_compute_keys sent some YAMLs to the removed
 # legacy per-patch GPU path. The new engine must refuse them at load instead of
 # running the grid path silently. Which shapes are refused and which load comes from
@@ -209,7 +209,7 @@ def test_dev8_grid_layouts_load_with_what_they_say(config, tmp_path, name):
     assert "framework" not in gpu
 
 
-# b1_review.md C-1: the refusal text may only claim what dev8 did. dev8 moved a
+# The refusal text may only claim what dev8 did. dev8 moved a
 # per-patch-only compute.gpu block to compute.legacy_gpu whatever compute.mode said,
 # but switched the run to the legacy per-patch GPU path only for the exact string
 # 'gpu' (its step 3 compares with ==). 'GPU' / ' gpu' are still refused here (the
@@ -318,6 +318,35 @@ def test_a3_remaining_value_is_dropped_with_the_note(config, tmp_path, capsys, p
 
 @pytest.mark.parametrize("path, value", sorted(RETIRED_A3_OTHER.items()))
 def test_a3_other_value_fails_at_load(config, tmp_path, path, value):
+    cfg = _anchor()
+    _set(cfg, path, value)
+    err = _load_error(config, tmp_path, cfg)
+    assert isinstance(err, ValueError), err
+    assert path in str(err), err
+
+
+# ---------------------------------------------------------------------------
+# uniphot 0.1.1: the fixed association radius of the bright-object mask is replaced by a radius measured in each
+# run (the PSF FWHM, widened by the measured list-image scatter, at most compute.gpu.positions.pos_max_shift_pix).
+# Rule of this release line (CHANGELOG 0.1.0): the value of the 0.1.0 default loads with the note; any other value
+# would ask for behaviour that no longer exists, and fails at load naming the key.
+RETIRED_0_1_1_SURVIVING = {"bright_mask.match_radius_pix": 3.0}
+RETIRED_0_1_1_OTHER = {"bright_mask.match_radius_pix": 5.0}
+
+
+@pytest.mark.parametrize("path, value", sorted(RETIRED_0_1_1_SURVIVING.items()))
+def test_0_1_1_default_value_is_dropped_with_the_note(config, tmp_path, capsys, path, value):
+    cfg = _anchor()
+    _set(cfg, path, value)
+    loaded = config.load_config(_write(tmp_path, cfg))
+    notes = [ln for ln in capsys.readouterr().err.splitlines() if "retired config key" in ln]
+    assert len(notes) == 1 and path in notes[0], notes
+    assert _get(loaded, path) is _MISSING
+    assert _get(config.DEFAULT_CONFIG, path) is _MISSING
+
+
+@pytest.mark.parametrize("path, value", sorted(RETIRED_0_1_1_OTHER.items()))
+def test_0_1_1_other_value_fails_at_load(config, tmp_path, path, value):
     cfg = _anchor()
     _set(cfg, path, value)
     err = _load_error(config, tmp_path, cfg)

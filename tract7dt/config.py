@@ -85,7 +85,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "deblend_cont": 0.005,
         "clean": True,
         "clean_param": 1.0,
-        "match_radius_pix": 3.0,
         "ellipse_scale": 3.0,
         "min_radius_pix": 6.0,
         "dilate_pix": 1,
@@ -1454,6 +1453,8 @@ _RETIRED_KEYS: dict[str, tuple[str, Any, str]] = {
     'bright_mask.extra_unmatched_csv': ('default', None, "the external unmatched-detection list (the two-pass form's speck channel) is removed (uniphot 0.1.0); it existed in the unreleased tract7dt dev8"),
     'compute.gpu.background.dump_diagnostics': ('default', False, "the bg_diag dump (the two-pass form's residual input) is removed (uniphot 0.1.0); it existed in the unreleased tract7dt dev8"),
     'zp.calibrate': ('default', True, "skipping only the ZP solve was the two-pass form's pass-A setting, removed with it (uniphot 0.1.0); it existed in the unreleased tract7dt dev8 (zp.enabled: false skips the whole ZP stage, Gaia source augmentation included)"),
+    # uniphot 0.1.1: the bright-object mask's detection-catalogue association radius is measured in each run.
+    'bright_mask.match_radius_pix': ('default', 3.0, "the fixed association radius is replaced (uniphot 0.1.1): a white-stack detection is the light of a listed source when its light peak lies within max(the run's PSF FWHM, 3.72 x the list-image scatter measured in the run) of the row, at most compute.gpu.positions.pos_max_shift_pix; 3.0 was the uniphot 0.1.0 default"),
     'epsf': ('ignore', None, 'CPU/Tractor per-patch path removed (uniphot 0.1.0)'),
     'patches': ('ignore', None, 'CPU/Tractor per-patch path removed (uniphot 0.1.0)'),
     'patch_inputs': ('ignore', None, 'CPU/Tractor per-patch path removed (uniphot 0.1.0)'),

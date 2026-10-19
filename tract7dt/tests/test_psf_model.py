@@ -510,8 +510,8 @@ def _outlier_set(rng, n=600, n_out=30, extra=1.0, hetero=1e-3):
 # and review_a.3.md, not distributed): the 3rd ed. 5.4 expectation "every planted outlier cut, every clean star kept"
 # FAILED on the designer's scene (seed 23: 24/30 outliers, 0/570 clean; clean 300-star scene 1/300).
 # The round-3 "pass" (seed 31) used a scene changed after those results (1000 stars, 2x neighbours)
-# and is not a pass: on the designer's scene with fresh seeds 101/202/303 expectation 2 failed 3/3
-# (review A-1), and vbar changed no registered result.  Design v2.5 3rd ed. 7.1 deleted the Huber
+# and is not a pass: on the designer's scene with fresh seeds 101/202/303 expectation 2 failed 3/3,
+# and vbar changed no registered result.  Design v2.5 3rd ed. 7.1 deleted the Huber
 # weight and vbar (u = 1; four fits per band); their tests went with them (round 4).
 
 
@@ -857,7 +857,7 @@ def test_extra_candidate_plug_in_point():
 
 
 def test_constant_noiseless_field_builds():
-    """review_a.1 B-2: a spatially constant noiseless PSF (identical stamps) has no render error;
+    """A spatially constant noiseless PSF (identical stamps) has no render error;
     the model builds with n_b = 1 (it used to stop with ValueError in the render estimate)."""
     shape = (660, 1000)
     psf = synth.PSFField(shape, fwhm=4.0)
@@ -876,7 +876,7 @@ def test_constant_noiseless_field_builds():
 
 
 def test_extra_candidate_fit_sees_only_the_training_stars():
-    """review_a.1 C-3: the plug-in's fit receives the training stars only (structure, not contract):
+    """The plug-in's fit receives the training stars only (structure, not contract):
     every array it gets has train.sum() rows, and none of the held-out stamps is among them."""
     rng = np.random.default_rng(47)
     psf = synth.PSFField(SHAPE)
@@ -907,7 +907,7 @@ def test_extra_candidate_fit_sees_only_the_training_stars():
 
 
 def test_render_check_includes_cell_edge_midpoints():
-    """review_a.1 C-1: the top-cell check also looks at the sub-cell edge midpoints (where a
+    """The top-cell check also looks at the sub-cell edge midpoints (where a
     saddle-shaped error concentrates), not only the sub-cell centres: per checked cell n^2 centres +
     2 n (n + 1) edge midpoints."""
     sz, shape = 9, (660, 1000)
@@ -922,7 +922,7 @@ def test_render_check_includes_cell_edge_midpoints():
 
 
 def test_row_skip_preserves_the_model(monkeypatch):
-    """review_a.1 B-6 (psf_speed_answer 2.4): computing only the R rows some training set can support
+    """Computing only the R rows some training set can support
     gives the same model as computing every row (reference written here): stamps and tau^2 to relative
     1e-12, same active sets -- on a sparse set where the skip happens (D/16 p2 nodes on p = 0)."""
     rng = np.random.default_rng(59)
@@ -964,7 +964,7 @@ def test_row_skip_preserves_the_model(monkeypatch):
 
 
 def test_dense_evaluation_path_preserves_values(monkeypatch):
-    """review_a.1 B-6 (psf_speed_answer 2.3): the per-cell GEMM path for dense point sets gives the
+    """The per-cell GEMM path for dense point sets gives the
     same values as the per-point gather path -- for one candidate at clustered points (relative 1e-12)
     and end to end for a model rendered at refinement 3 (stamps relative 1e-12)."""
     rng = np.random.default_rng(61)

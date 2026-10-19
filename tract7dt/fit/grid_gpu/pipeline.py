@@ -3011,7 +3011,7 @@ def run_grid_gpu_fit(cfg: dict[str, Any], state: dict[str, Any]) -> Path:
     # channel disclosure): the one measured contamination channel every
     # other flag misses is an uncataloged point source within ~1 PSF FWHM
     # of a cataloged source, whose white-stack blend detection lands inside
-    # bright_mask.match_radius_pix of the host's own catalog entry --
+    # the bright-mask association radius of the host's own catalog entry --
     # "matched", so it escapes the bright mask, phantom routing AND
     # subtract_detected -- and the joint fit absorbs it: the host displaces
     # toward the interloper and over-brightens while fracflux / fracin /

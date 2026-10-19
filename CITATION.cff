@@ -10,8 +10,8 @@ authors:
     given-names: Danhyeuk
     affiliation: "Seoul National University"
     email: tjfeksgur@snu.ac.kr
-version: "0.1.0"
-date-released: "2026-10-15"
+version: "0.1.1"
+date-released: "2026-10-19"
 license: GPL-2.0-only
 repository-code: "https://github.com/seoldh99/uniphot"
 keywords:

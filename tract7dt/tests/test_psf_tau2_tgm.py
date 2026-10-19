@@ -129,7 +129,7 @@ def test_tau2_zero_warns(caplog):
 
 
 def _gap(v, m):
-    """C-7: |MS limit - argmax of the same-kernel density on a 2,000-point grid over [min v, max v]| / h."""
+    """|MS limit - argmax of the same-kernel density on a 2,000-point grid over [min v, max v]| / h."""
     v = np.asarray(v, dtype=np.float64)
     h = 0.5 * 1.4826 * float(np.median(np.abs(v - np.median(v))))
     if not h > 0:

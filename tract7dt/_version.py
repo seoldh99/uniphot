@@ -5,4 +5,4 @@ The one place the version is written: ``pyproject.toml`` reads it from here, and
 that ran, whatever distribution metadata the environment holds.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

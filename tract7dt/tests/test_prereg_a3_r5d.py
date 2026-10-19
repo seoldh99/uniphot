@@ -11,11 +11,11 @@ Fixed before any result (do not change the statistics, thresholds, seeds or rule
   (1 >= 10 and 2 >= 0.06); P-A4 (ii): mean over the five seeds of [peak_err(r5d) - peak_err(R3)] <= 0 (judged and
   recorded; 3.2: a failure does not block the merge and is recorded as an open failure); P-A4 (i) and (iii) and P-A5 are
   recorded only.
-Evaluation seeds are computed only in the deliberate, recorded run (pre-review review_r5d_tests_prereview.md A-1): the
+Evaluation seeds are computed only in the deliberate, recorded run: the
 P-A2 test and the evaluation fixture SKIP (not pass) unless $UNIPHOT_PREREG_R5D_RUN holds the engine repository's HEAD
 commit (>= 7 hex digits), `git status --porcelain -- tract7dt` of that repository is empty, and $UNIPHOT_PREREG_OUT is an
 existing directory; every record JSON then carries the HEAD and the time.  Before any evaluation seed the gate also
-needs (A-2, B-1, B-2, C-10 of the pre-review): the default path (detection_fits False) gives the same a, sigma2_nb,
+needs: the default path (detection_fits False) gives the same a, sigma2_nb,
 kappa, phi_norm2 as the judged path on seed 5; the engine's diagnostics are complete; the engine a equals the
 reference a (relative 1e-6) on the three seed-5 lists; the projected / non-converged box counts equal the reference's;
 star_noise_a, star_noise_t, neighbour_amplitude and psf_model.py are those of c15c72b (1.4 "unchanged").
@@ -89,7 +89,7 @@ def _git(*args):
 
 
 def _official_run() -> dict:
-    """Pre-review A-1: compute evaluation seeds only in the deliberate run of a committed engine, recorded to OUT."""
+    """Compute evaluation seeds only in the deliberate run of a committed engine, recorded to OUT."""
     want = os.environ.get(RUN_ENV, "")
     try:
         head = _git("rev-parse", "HEAD").strip()
@@ -251,12 +251,12 @@ def conformance():
         m_e = (float(info_e["moffat_fwhm"]), float(info_e["moffat_beta"]))
         a_r, info_r = T.r5d_arm(sc, p_, pfs, profile=m_e)
         chk = T.r5d_conformance(info_e, info_r, m_e, m_ref)
-        # pre-review B-2: the engine a itself equals the reference a (relative 1e-6)
+        # the engine a itself equals the reference a (relative 1e-6)
         a_rel = float(np.max(np.abs(a_e - a_r) / np.abs(a_r)))
-        # pre-review C-10: the same definition gives the same projected / non-converged box counts
+        # the same definition gives the same projected / non-converged box counts
         counts_same = all(int(info_e[k]) == int(info_r[k]) for k in
                           ("n_star_projected", "n_star_not_converged", "n_det_projected", "n_det_not_converged"))
-        # pre-review B-1: every diagnostic the evaluation tests read is there
+        # every diagnostic the evaluation tests read is there
         try:
             _diag(info_e, a_e)
             diag_ok = True
@@ -279,12 +279,12 @@ def conformance():
                                    neighbour_flux=float(np.sum(info_e["neighbour_flux"])), a=float(np.sum(a_e)),
                                    ref_sigma2_nb=float(np.sum(info_r["sigma2_nb"])),
                                    ref_neighbour_flux=float(np.sum(info_r["neighbour_flux"])), ref_a=float(np.sum(a_r))))
-    # pre-review A-2 (registration 4 item 2): the default path (no detection fits) is the same code for a and sigma2_nb
+    # registration 4 item 2: the default path (no detection fits) is the same code for a and sigma2_nb
     a_d, info_d = _engine(sc, pop, detection_fits=False)
     a_t, info_t = _engine(sc, pop, detection_fits=True)
     out["default_path_same"] = bool(np.array_equal(a_d, a_t) and np.array_equal(info_d["sigma2_nb"], info_t["sigma2_nb"])
                                     and info_d["kappa"] == info_t["kappa"] and info_d["phi_norm2"] == info_t["phi_norm2"])
-    # pre-review B-2: the parts registration 1.4 keeps are those of c15c72b
+    # the parts registration 1.4 keeps are those of c15c72b
     out["unchanged_vs_c15"] = _unchanged_vs_c15()
     _record("conformance_seed5", out)
     ok = (out["hash_seed5"] == J()["populations"]["5"]["sha256"]
@@ -328,7 +328,7 @@ def test_1p5_3_to_6_conformance(conformance, which):
 
 @pytest.mark.parametrize("which", ["full", "unlisted", "nearrow"])
 def test_engine_a_counts_and_diagnostics_match_the_reference(conformance, which):
-    """Pre-review B-1, B-2, C-10 (wiring, seed 5): a equals the reference a, same projected / non-converged counts,
+    """Wiring, seed 5: a equals the reference a, same projected / non-converged counts,
     all diagnostics present."""
     c = conformance[which]
     assert c["a_max_rel_vs_reference"] <= 1e-6, c["a_max_rel_vs_reference"]
@@ -337,13 +337,13 @@ def test_engine_a_counts_and_diagnostics_match_the_reference(conformance, which)
 
 
 def test_default_path_is_the_same_code_as_the_detection_path(conformance):
-    """Registration 4 item 2 (opus C-5), pre-review A-2: detection fits only on request; a, sigma2_nb, kappa and
+    """Registration 4 item 2: detection fits only on request; a, sigma2_nb, kappa and
     phi_norm2 of the default path are bit for bit those of the judged path (seed 5, full list)."""
     assert conformance["default_path_same"]
 
 
 def test_parts_kept_by_registration_1p4_are_c15c72b(conformance):
-    """Pre-review B-2: star_noise_a, star_noise_t, neighbour_amplitude (body hashes in this tree) = c15c72b, and
+    """star_noise_a, star_noise_t, neighbour_amplitude (body hashes in this tree) = c15c72b, and
     psf_model.py of the a.3 official-run commit 98c87d5 = c15c72b's (fixed commits, not this tree: unit a.1b changes
     psf_model.py after a.3 by design -- card 024 impl_a1b.md "T3 r3d", review_a1b_t3_prerun.md (3)).  This tree's
     psf_model.py comparison stays in the evaluation gate (`conformance_pass`) and is shown here as information."""

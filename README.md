@@ -4,7 +4,7 @@ uniphot measures the fluxes of a given list of sources in images of one field ta
 It fits point-source and galaxy models, convolved with a point-spread function (PSF) built from the
 images themselves, to all bands at once on NVIDIA GPUs ("forced PSF photometry").
 
-> **Status: 0.1.0, an early preview release. Not yet recommended for scientific use.** This is research
+> **Status: 0.1.1, an early preview release. Not yet recommended for scientific use.** This is research
 > software under active development. It has been run only on data from 7DT (the 7-Dimensional Telescope).
 > Results, defaults, file formats and command names may change between versions. This version has known
 > defects that affect the measured values; see [Known limitations](#known-limitations).
@@ -53,7 +53,7 @@ both use the Python import name `tract7dt` and would overwrite each other's file
 ### With conda (recommended)
 
 ```bash
-git clone --branch v0.1.0 https://github.com/seoldh99/uniphot.git
+git clone --branch v0.1.1 https://github.com/seoldh99/uniphot.git
 cd uniphot
 conda env create -f environment.yml
 conda activate uniphot
@@ -72,7 +72,7 @@ python3.11 -m venv uniphot-env
 source uniphot-env/bin/activate
 pip install --upgrade pip
 pip install "jax[cuda12]"
-pip install "git+https://github.com/seoldh99/uniphot.git@v0.1.0"
+pip install "git+https://github.com/seoldh99/uniphot.git@v0.1.1"
 uniphot doctor
 ```
 
@@ -104,10 +104,10 @@ CUDA_VISIBLE_DEVICES="" JAX_PLATFORMS=cpu python -m pytest \
 Give the tests folder by its path as above: `pytest --pyargs tract7dt.tests` finds no tests.
 Some tests check records of the development work that are not part of this repository; they are skipped,
 each with a message that says so. A few tests are marked as expected failures (`xfail`), with the reason.
-In a new conda environment on our test server, this command ran 808 tests in about 11 minutes: 712 passed,
-92 were skipped (91 that need the development records, and 1 end-to-end solve that does not work on the CPU
-backend: a known defect of uniphot's solver there, where a column without data spoils the whole band), and 4 were
-expected failures; none failed otherwise. Two of the expected failures depend on thread timing and may pass on
+In a conda environment made from `environment.yml` on our test server, this command ran 828 tests in about
+16 minutes on 4 CPU cores: 732 passed, 92 were skipped (91 that need the development records, and 1 end-to-end
+solve that does not work on the CPU backend: a known defect of uniphot's solver there, where a column without
+data spoils the whole band), and 4 were expected failures; none failed otherwise. Two of the expected failures depend on thread timing and may pass on
 other machines (reported as `xpassed`).
 
 ## Quick start with the sample data
@@ -174,12 +174,13 @@ calibration stars from the ESA Gaia archive (internet needed). To do this in adv
 The run succeeded only if `sample_run/RUN_STATUS.json` says `"status": "ok"`. The catalog is
 `sample_run/output_catalog.csv`.
 
-On our test server, with the configuration above and `compute.gpu.devices: [1, 2]` (two RTX 3090 cards), the
-sample run finished with `"status": "ok"` in about 13 minutes, starting with an empty JAX compilation cache; the
-step that fits groups of neighbouring sources took about 9.5 of those minutes. Its memory use peaked at about
-27 GiB of RAM (sampled every 0.5 s, so the true peak can be higher). Of the 751 listed
-sources, 652 were fitted and 617 have `fit_is_reliable` = `True`; the other 99 lie inside the bright-object
-mask and were not fitted (see [Known limitations](#known-limitations)).
+On our test server, with the configuration above and `compute.gpu.devices: [1, 2]` (two RTX 3090 cards), a
+sample run of this version finished with `"status": "ok"` in about 13 minutes; the step that fits groups of
+neighbouring sources took about 10 of those minutes. The JAX compilation cache already held kernels from earlier
+runs, so a first run may take longer. The run's memory use peaked at about 24 GiB of RAM (sampled every 0.5 s,
+so the true peak can be higher). Of the 751 listed sources, 747 were fitted and 710 have `fit_is_reliable` =
+`True`; the other 4 lie inside the bright-object mask and were not fitted (see
+[Known limitations](#known-limitations)).
 
 ## Inputs
 
@@ -306,26 +307,53 @@ point becomes 25, that is, on the header zero point, magnitude = 25 − 2.5 log1
   automatically from the number of sources, so a small change in the source list can change the layout and move
   fluxes. With an earlier development version, changing only the layout moved 1.4% of band fluxes by more than
   their statistical error (`FLUXERR`).
-- **Bright-object mask.** Bright objects that are not in your list are found on a sum of all bands, without
-  subtracting the sky and with one noise value per image (`SKYSIG`). If the sky was not subtracted from the
-  coadds, or the noise near the edges of the coverage is much larger than `SKYSIG`, the detections and the mask
-  can become far too large. On other 7DT data this step has stopped the run with a SEP error ("internal pixel
-  buffer full"). Listed sources inside the mask are not fitted: their `affected_by_bright_mask` is `True` and
-  `fit_is_reliable` is `False` (reason `bright_mask`). In the sample run, this was 99 of the 751 listed sources
-  (13%). In each of these 99 the detection that masks the source is the source's own light (in 4 of them merged
-  with nearby sources): because the sky is not subtracted before detection, the detected area spreads into the
-  surrounding sky noise and its centre falls 3 to 10 pixels from the listed position, outside the 3-pixel matching
-  radius (`bright_mask.match_radius_pix`), so the source is masked as if it were not in the list. For 7 of the 99,
-  all stars, the star's light itself lies 3 to 11 pixels from its listed position. The mask also covers part of
-  some fitted sources: in the sample run, 12 fitted listed sources have more than 20% of their model flux on
-  masked pixels (column `fracmasked`), and 11 of them still have `fit_is_reliable` = `True`, so `fit_is_reliable`
-  does not always show that a fit was partly masked. The fix (subtracting the sky before this detection) is not
-  included in this version; it is planned for a later version after it has been validated, because it also changes
-  the masks in crowded fields considerably.
+- **Bright-object mask.** Bright objects that are not in your list are found on a sum of all bands, after
+  subtracting a local sky and scaling the noise (`SKYSIG`) to the scatter measured around each pixel. A detection
+  is taken as the light of a listed source when its peak lies within a radius of the row: the larger of the PSF
+  width (FWHM) and 3.72 times the scatter between the rows' positions and the detected peaks, both measured in the
+  run, and at most `compute.gpu.positions.pos_max_shift_pix` (5 pixels by default). The radius is written to `run.log`
+  and `bright_mask/association.json`. Listed sources inside the mask are not fitted: their
+  `affected_by_bright_mask` is `True` and `fit_is_reliable` is `False` (reason `bright_mask`). In the sample run
+  this was 4 of the 751 listed sources (99 in version 0.1.0), all stars whose light peaks farther from the listed
+  position than the radius (3.84 pixels in that run). The mask can also cover part of a fitted source, and
+  `fit_is_reliable` does not take this into account (column `fracmasked` gives the fraction of the model flux on
+  masked pixels); in the sample run no fitted listed source has more than 20% (12 in version 0.1.0). In crowded
+  fields the measured scatter is larger than `SKYSIG` (about 2.25 times in a crowded 7DT test field; we think
+  mainly from the light of unresolved stars, but have not tested it), so fewer objects are detected and masked
+  than with `SKYSIG` alone (see `CHANGELOG.md`).
 - **Deep extragalactic fields.** By default, bright objects that are not in your list are subtracted as point
   sources (`bright_mask.subtract_unmatched: true`), which suits star fields. In deep extragalactic fields set it
   to `false`: in a 7DT test of such a field, the default moved 40% of the sources by more than 10 mmag
-  compared with `false`.
+  compared with `false` (measured with an earlier development version).
+- **Five checks that version 0.1.1 failed (four problems).** Before release, 0.1.1 was compared with 0.1.0 on
+  the sample data and on a sparse and a crowded 7DT test field, against limits set before the runs. Five checks
+  failed; they show the four problems below (problem 4 failed two checks). Only the bright-object mask code
+  changed; the failures show how the unchanged fitting and flagging code responds to the changed detection of
+  bright objects not in your list (the mask, and the objects subtracted as point sources; in the sparse field
+  the mask did not change, only the subtracted point sources). In the two test fields, running 0.1.0 twice on
+  the same input changed no flag and moved the compared fluxes by at most 0.0006 times their flux error
+  (`FLUXERR_{b}_fit`), so the changes below are not run-to-run noise. Fixes are planned for a later version.
+  1. **Two list rows on one object.** If your list has the same object twice (in the sample list, apparently
+     saturated stars that the source catalog split in two), the two fitted positions can meet at nearly one point,
+     and the split of the flux between the rows is arbitrary: one can be negative, and both can have
+     `fit_is_reliable` = `True`. The sample list has 8 such pairs (16 rows), the same in 0.1.0; 2 pairs (4 rows)
+     are marked reliable, and their magnitudes are off by 0.15 to 2.4 mag in both directions, while their reported
+     errors are 0.03 to 0.14 mag. Such rows have fitted positions within 1 pixel of each other; the sum of their
+     fluxes agrees with the Gaia XP synthetic photometry of the star within 0.06 mag in 31 of 32 band values
+     (0.16 mag in the other).
+  2. **Galaxies in one image tile.** In the sample run, the 19 galaxies checked in one of the four tiles, far from
+     where the mask changed, came out about 1% larger (`Re_fit`, median) and 0.8 to 1.0% brighter (median) in
+     m500, m600 and m700 than in 0.1.0. In m500 the median change is 0.17 times their flux error, where 0.05 was
+     expected and 0.15 was the limit.
+  3. **Reliability flag of isolated stars.** In the sparse field, 23 of the 5,550 compared sources (0.41%), all
+     isolated stars, switched `fit_is_reliable` (12 to `False`, 11 to `True`; reason `island_stalled`), while
+     their fluxes moved by at most 0.017 times their flux error.
+  4. **Stars at the edge of the data.** In the crowded field, a group of stars at the edge of the images' coverage
+     moved by up to 70 times the flux error of 0.1.0 in band values with no flag other than bit 4, in rows marked
+     reliable; band values with bit 16 at the same edge moved by up to 267 times. In 10 band values there, bit 1
+     (no data) was set in 0.1.0 but not in 0.1.1; in 7 of them the fitted position lies on pixels without data and
+     the value is meaningless (as large as −2.4 × 10⁷), and they carry bit 16. Which version is closer to the true
+     fluxes is not known.
 - **No validated comparison with other tools yet.** uniphot has been compared with other photometry tools only in
   development tests. No validated comparison on the same data has been completed, and no claim is made here about
   the accuracy or speed of uniphot relative to other tools.

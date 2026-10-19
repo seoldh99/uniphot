@@ -1,9 +1,11 @@
 """
 White-stack bright unmatched-source masking for tract7dt.
 
-Runs SEP on the in-memory white stack, matches detections against active
-catalog sources, and builds ellipse-based masks for unmatched bright
-contaminants.  The resulting mask is stored in ``state["bright_mask"]``
+Runs SEP on the in-memory white stack (local sky removed, noise scaled to
+the measured scatter), decides which detections are the light of active
+catalog sources (light peak within a radius measured in the run, see
+``associate_detections``), and masks the others (or hands them to the fit
+as subtract-only point sources).  The resulting mask is stored in ``state["bright_mask"]``
 and later composed with saturation and non-finite masks into per-band
 ``bad`` arrays by the pipeline's ``_compose_final_masks`` step, so that
 the downstream fit sees ``invvar = 0`` for those pixels.
@@ -12,7 +14,6 @@ the downstream fit sees ``invvar = 0`` for those pixels.
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,45 @@ def detect_bright_sources(cfg: dict[str, Any], state: dict[str, Any]):
 
     p = sep_extract_params(cfg)
     thresh = p["thresh_sigma"]
+    # The threshold is a significance above the local sky in units of the local noise, so both are measured
+    # on the white stack itself; the input coadds are used as they are.
+    # (1) Sky: some coadds carry an unsubtracted sky pedestal (the UDS coadds have SKYVAL = 0.73-0.84 SKYSIG per
+    #     band, +1.6 sigma_white in a 4-band white stack, +4.3 after SEP's 3x3 matched filter, against a 5
+    #     sigma threshold: 29-30% of the frame is above it and SEP's active-pixel stack overflows). A SEP mesh
+    #     background of the usable pixels is subtracted from this copy.
+    # (2) Noise: sigma_white comes from one header SKYSIG per frame. Where a coadd thins out (its footprint
+    #     rim) the real scatter is several times larger; the rim then passes the threshold as one snake of
+    #     ~1e6 pixels that becomes a frame-sized "bright source" mask. sigma_white is scaled by the locally
+    #     measured scatter of (white - sky) / sigma_white (SEP rms on the same mesh), keeping its per-pixel
+    #     shape (pixels with fewer usable bands stay noisier).
+    # Mesh and filter are SEP's own defaults. Only this detection copy changes: state["white"]/["sigma_white"],
+    # the fit data and the saved diagnostics are unchanged; the detections' fluxes (physical mask radius,
+    # unmatched-source routing) are then sky-free too.
+    det_mask = bad_pix | sig_bad
+    bkg = sep.Background(white_sep, mask=det_mask, bw=p["back_size"], bh=p["back_size"],
+                         fw=p["back_filter"], fh=p["back_filter"])
+    white_sep -= bkg.back(dtype=np.float32)
+    white_sep[det_mask] = 0.0
+    z = np.zeros_like(white_sep)
+    np.divide(white_sep, sig_sep, out=z, where=~det_mask)
+    zbkg = sep.Background(z, mask=det_mask, bw=p["back_size"], bh=p["back_size"],
+                          fw=p["back_filter"], fh=p["back_filter"])
+    scale = zbkg.rms(dtype=np.float32)
+    del z
+    sig_sep *= scale
+    # SEP's rms map is a bicubic spline through the mesh values; next to a sharp step in the scatter (a coadd
+    # rim) it can undershoot to zero or below (public example: 28,704 pixels, 0.04% of the frame). A pixel
+    # without a positive noise cannot carry a significance: like a pixel without a stated noise, it gets no
+    # weight in the detection.
+    no_noise = ~det_mask & ~(np.isfinite(sig_sep) & (sig_sep > 0))
+    sig_sep[det_mask | no_noise] = 1e30
+    logger.info("white-stack detection: SEP mesh %d px, filter %d; sky removed (global %.3g x median sigma_white); "
+                "noise scaled by measured scatter (median %.3g, p99 %.3g; not positive at %d px, given no weight)",
+                p["back_size"], p["back_filter"],
+                float(bkg.globalback) / float(np.median(sigma_white[~det_mask])) if (~det_mask).any() else float("nan"),
+                float(np.median(scale[~det_mask])) if (~det_mask).any() else float("nan"),
+                float(np.percentile(scale[~det_mask][::97], 99)) if (~det_mask).any() else float("nan"),
+                int(no_noise.sum()))
     # Extreme-crowding fields (|b|~2 bulge, 237k-src tile) overflow SEP's
     # default limits at the shipped threshold (2026-07-31 lowb trial finding
     # #5). The package-wide limits (sep_limits.py) only matter when the call
@@ -99,6 +139,11 @@ def sep_extract_params(cfg: dict[str, Any]) -> dict:
         "deblend_cont": float(bm_cfg.get("deblend_cont", 0.005)),
         "clean": bool(bm_cfg.get("clean", True)),
         "clean_param": float(bm_cfg.get("clean_param", 1.0)),
+        # Sky removed and noise rescaled from the measured scatter before the call (detect_bright_sources):
+        # SEP's own default mesh (64 px) and median filter (3 meshes). Part of this dict so a cached objs file
+        # made without them is not adopted (the cache key reads this dict).
+        "back_size": 64,
+        "back_filter": 3,
     }
 
 
@@ -201,20 +246,20 @@ def finalize_bright_mask(cfg: dict[str, Any], state: dict[str, Any], objs) -> np
         state["bright_mask"] = mask
         return mask
 
-    if len(objs) == 0:
-        mask = np.zeros((h, w), dtype=bool)
-        input_catalog["affected_by_bright_mask"] = False
-        state["bright_mask"] = mask
-        _save_diagnostics(cfg, white, mask, objs, np.array([], dtype=bool),
-                          input_catalog, image_dict)
-        return mask
+    # The run's PSF, as the monotone radial profile of a representative band: its FWHM sets the association
+    # radius below, and in mask_radius_mode "physical" the profile is also the mask radius law.
+    psf_profile = _load_white_psf_profile(cfg, state)
+    fwhm = _psf_fwhm_from_profile(*psf_profile) if psf_profile is not None else None
 
-    det_x = objs["x"]
-    det_y = objs["y"]
-
-    # --- Match detections to active catalog sources ---
-    match_r = float(bm_cfg.get("match_radius_pix", 3.0))
-    matched = _match_to_catalog(det_x, det_y, input_catalog, image_dict, match_r)
+    # --- Which detections are the light of active catalog sources ---
+    max_shift = float(cfg["compute"]["gpu"]["positions"]["pos_max_shift_pix"])
+    matched, assoc = _match_to_catalog(
+        objs, input_catalog, image_dict, np.asarray(state["sigma_white"], dtype=np.float32), fwhm, max_shift)
+    assoc["fwhm_band"] = _white_psf_band(state) if fwhm is not None else None
+    state["bright_mask_matched"] = matched
+    state["bright_mask_association"] = assoc
+    _log_association(assoc)
+    _save_association(cfg, assoc)
     n_matched = int(np.sum(matched))
     n_unmatched = len(objs) - n_matched
     logger.info("Matched %d / %d SEP detections to catalog; %d unmatched to mask",
@@ -225,7 +270,7 @@ def finalize_bright_mask(cfg: dict[str, Any], state: dict[str, Any], objs) -> np
         input_catalog["affected_by_bright_mask"] = False
         state["bright_mask"] = mask
         _save_diagnostics(cfg, white, mask, objs, matched,
-                          input_catalog, image_dict)
+                          input_catalog, image_dict, assoc)
         return mask
 
     # --- Convert-to-model mode: route unmatched detections into the island
@@ -257,7 +302,7 @@ def finalize_bright_mask(cfg: dict[str, Any], state: dict[str, Any], objs) -> np
             "as DET (no wing mask; saturation cores still masked)",
             int(um.sum()))
         _save_diagnostics(cfg, white, mask, objs, matched,
-                          input_catalog, image_dict)
+                          input_catalog, image_dict, assoc)
         return mask
 
     # --- Build mask for unmatched detections ---
@@ -266,7 +311,7 @@ def finalize_bright_mask(cfg: dict[str, Any], state: dict[str, Any], objs) -> np
     # tuned geometric constants -- see _build_physical_mask). Physical falls
     # back to ellipse when no from_stars PSF profile is available.
     mode = str(bm_cfg.get("mask_radius_mode", "ellipse"))
-    profile = _load_white_psf_profile(cfg, state) if mode == "physical" else None
+    profile = psf_profile if mode == "physical" else None
     if mode == "physical" and profile is None:
         logger.warning("bright_mask mask_radius_mode='physical' but no from_stars "
                        "PSF profile available; using legacy ellipse mask")
@@ -372,7 +417,7 @@ def finalize_bright_mask(cfg: dict[str, Any], state: dict[str, Any], objs) -> np
 
     # --- Save diagnostics ---
     _save_diagnostics(cfg, white, mask, objs, matched,
-                      input_catalog, image_dict)
+                      input_catalog, image_dict, assoc)
 
     return mask
 
@@ -405,69 +450,199 @@ def apply_bright_mask(cfg: dict[str, Any], state: dict[str, Any]) -> np.ndarray:
     return finalize_bright_mask(cfg, state, objs)
 
 
+# Association of white-stack detections with the active rows of the catalog.
+# A detection is the light of a listed source when an active row lies within r of the detection's matched-filter
+# peak pixel (SEP xcpeak, ycpeak: where the light is, not the isophotal centroid, which the shape of the detected
+# area -- sky, noise, neighbours -- pulls around). For each population of rows (the user's list; the Gaia rows the
+# engine adds as ZP calibrators, which carry their own, Gaia, astrometry)
+#     r = min(pos_max_shift_pix, max(FWHM, k * sigma)),   k = sqrt(-2 ln ASSOC_ALPHA)
+# - FWHM of the run's PSF: two lights closer than this are one detection; the fit sorts their positions out.
+# - sigma, the list-image scatter measured in this run, widens r when the list is worse than the image resolution:
+#   with 2-D normal offsets a true pair falls outside k * sigma with probability ASSOC_ALPHA.
+# - pos_max_shift_pix: the fit cannot move a source farther from its list position, so light beyond it is not
+#   that source's light as far as the fit is concerned; it is masked (or subtracted) as an unlisted source.
+# sigma per axis = 1.4826 x median |peak - row| about 0 (a systematic list offset counts as scatter) over the
+# mutual nearest row-peak pairs whose detection S/N >= ASSOC_PAIR_MIN_SNR (keeps the peak's own position noise,
+# ~0.1 px, below the scatter and chance pairs out); not used with fewer than ASSOC_PAIR_MIN_COUNT pairs (the MAD
+# sigma is then uncertain by more than ~15%). sigma = rms of the two axes.
+# Detection S/N = isophotal flux / (header sigma_white at the peak pixel x sqrt(npix)).
+ASSOC_ALPHA = 1e-3
+ASSOC_PAIR_MIN_SNR = 20.0
+ASSOC_PAIR_MIN_COUNT = 30
+_ASSOC_POPULATIONS = ("listed", "injected_gaia")
+
+
+def _psf_fwhm_from_profile(psf_r: np.ndarray, psf_p: np.ndarray) -> float | None:
+    """FWHM [px] of a monotone radial PSF profile (``psf_radial_profile``): twice the radius where it falls to
+    half its central value, linearly interpolated between profile points. None if it never does."""
+    r = np.asarray(psf_r, dtype=float)
+    p = np.asarray(psf_p, dtype=float)
+    if p.size < 2 or not np.isfinite(p[0]) or p[0] <= 0:
+        return None
+    q = p / p[0]
+    below = np.nonzero(q < 0.5)[0]
+    if below.size == 0:
+        return None
+    k = int(below[0])                       # >= 1 because q[0] = 1
+    return float(2.0 * (r[k - 1] + (q[k - 1] - 0.5) / (q[k - 1] - q[k]) * (r[k] - r[k - 1])))
+
+
+def associate_detections(
+    objs: np.ndarray,
+    row_x: np.ndarray,
+    row_y: np.ndarray,
+    row_injected: np.ndarray,
+    sigma_white: np.ndarray,
+    fwhm_pix: float | None,
+    max_shift_pix: float,
+) -> tuple[np.ndarray, dict]:
+    """Pixel-frame association (rule above). ``row_*``: the active rows, ``row_injected`` True for the Gaia rows
+    added by the engine. Returns ``matched`` (one bool per detection) and the record of the rule's quantities.
+    Without a PSF FWHM (``fwhm_pix`` None) the lower bound of r is ``max_shift_pix``."""
+    k = float(np.sqrt(-2.0 * np.log(ASSOC_ALPHA)))
+    base = float(max_shift_pix) if fwhm_pix is None else float(fwhm_pix)
+    n_det = len(objs)
+    row_x = np.asarray(row_x, dtype=float)
+    row_y = np.asarray(row_y, dtype=float)
+    row_injected = np.asarray(row_injected, dtype=bool)
+    ok = np.isfinite(row_x) & np.isfinite(row_y)
+    sel = {"listed": ok & ~row_injected, "injected_gaia": ok & row_injected}
+
+    px = np.asarray(objs["xcpeak"], dtype=float) if n_det else np.zeros(0)
+    py = np.asarray(objs["ycpeak"], dtype=float) if n_det else np.zeros(0)
+    ridx = np.nonzero(ok)[0]
+    pair_det = np.full(len(row_x), -1, dtype=np.int64)        # detection index of a usable pair, per row
+    if n_det and ridx.size:
+        sw = np.asarray(sigma_white, dtype=np.float64)
+        h, w = sw.shape
+        ix = np.clip(px.astype(np.int64), 0, w - 1)
+        iy = np.clip(py.astype(np.int64), 0, h - 1)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            snr = np.asarray(objs["flux"], dtype=float) / (sw[iy, ix] * np.sqrt(np.asarray(objs["npix"], float)))
+        peak_xy = np.column_stack([px, py])
+        row_xy = np.column_stack([row_x[ridx], row_y[ridx]])
+        _, nd = cKDTree(peak_xy).query(row_xy)             # nearest peak of each row
+        _, nr = cKDTree(row_xy).query(peak_xy)             # nearest row of each peak
+        use = (nr[nd] == np.arange(ridx.size)) & (snr[nd] >= ASSOC_PAIR_MIN_SNR)
+        pair_det[ridx[use]] = nd[use]
+
+    pops: dict[str, dict] = {}
+    for name in _ASSOC_POPULATIONS:
+        s = sel[name] & (pair_det >= 0)
+        n_pairs = int(s.sum())
+        rec = {"n_rows": int(sel[name].sum()), "n_pairs": n_pairs, "scatter_measured": False,
+               "sigma_x_pix": None, "sigma_y_pix": None, "sigma_pix": None}
+        r = min(float(max_shift_pix), base)
+        if n_pairs >= ASSOC_PAIR_MIN_COUNT:
+            dx = px[pair_det[s]] - row_x[s]
+            dy = py[pair_det[s]] - row_y[s]
+            sx = 1.4826 * float(np.median(np.abs(dx)))
+            sy = 1.4826 * float(np.median(np.abs(dy)))
+            sp = float(np.sqrt(0.5 * (sx * sx + sy * sy)))
+            rec.update(scatter_measured=True, sigma_x_pix=sx, sigma_y_pix=sy, sigma_pix=sp)
+            r = min(float(max_shift_pix), max(base, k * sp))
+        rec["radius_pix"] = float(r)
+        pops[name] = rec
+
+    matched = np.zeros(n_det, dtype=bool)
+    if n_det:
+        peak_xy = np.column_stack([px, py])
+        for name in _ASSOC_POPULATIONS:
+            if not sel[name].any():
+                continue
+            d, _ = cKDTree(np.column_stack([row_x[sel[name]], row_y[sel[name]]])).query(peak_xy)
+            matched |= d <= pops[name]["radius_pix"]
+    record = {
+        "position": "matched-filter peak pixel (SEP xcpeak, ycpeak)",
+        "fwhm_pix": None if fwhm_pix is None else float(fwhm_pix),
+        "max_shift_pix": float(max_shift_pix),
+        "alpha": ASSOC_ALPHA, "k": k,
+        "pair_min_snr": ASSOC_PAIR_MIN_SNR, "pair_min_count": ASSOC_PAIR_MIN_COUNT,
+        "populations": pops,
+        "n_detections": int(n_det), "n_matched": int(matched.sum()), "n_unmatched": int(n_det - matched.sum()),
+    }
+    return matched, record
+
+
+def _catalog_pixels(catalog: pd.DataFrame, image_dict: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """White-stack pixel positions of the catalog rows (NaN where RA/Dec is not finite)."""
+    wcs_white = next(iter(image_dict.values()))["wcs"]
+    col_map = case_insensitive_col_map(catalog.columns)
+    ra = pd.to_numeric(catalog[col_map.get("ra", "RA")], errors="coerce").to_numpy(dtype=float)
+    dec = pd.to_numeric(catalog[col_map.get("dec", "DEC")], errors="coerce").to_numpy(dtype=float)
+    ok = np.isfinite(ra) & np.isfinite(dec)
+    x = np.full(len(ra), np.nan, dtype=float)
+    y = np.full(len(ra), np.nan, dtype=float)
+    if np.any(ok):
+        x[ok], y[ok] = wcs_white.all_world2pix(ra[ok], dec[ok], 0)
+    return x, y
+
+
+def _is_injected(catalog: pd.DataFrame) -> np.ndarray:
+    if "_is_injected_gaia" not in catalog.columns:
+        return np.zeros(len(catalog), dtype=bool)
+    return catalog["_is_injected_gaia"].fillna(False).astype(bool).to_numpy()
+
+
 def _match_to_catalog(
-    det_x: np.ndarray,
-    det_y: np.ndarray,
+    objs: np.ndarray,
     input_catalog: pd.DataFrame,
     image_dict: dict[str, Any],
-    match_radius_pix: float,
-) -> np.ndarray:
-    """Return a boolean array of length len(det_x), True where a detection
-    matches an active catalog source within match_radius_pix."""
-
+    sigma_white: np.ndarray,
+    fwhm_pix: float | None,
+    max_shift_pix: float,
+) -> tuple[np.ndarray, dict]:
+    """:func:`associate_detections` for the active rows of ``input_catalog`` (not ``excluded_any``)."""
     is_active = ~input_catalog.get("excluded_any", pd.Series(False, index=input_catalog.index)).fillna(False).astype(bool)
     active_cat = input_catalog.loc[is_active]
-
     if len(active_cat) == 0:
-        return np.zeros(len(det_x), dtype=bool)
+        x = y = np.zeros(0)
+        inj = np.zeros(0, dtype=bool)
+    else:
+        x, y = _catalog_pixels(active_cat, image_dict)
+        inj = _is_injected(active_cat)
+    return associate_detections(objs, x, y, inj, sigma_white, fwhm_pix, max_shift_pix)
 
-    wcs_white = next(iter(image_dict.values()))["wcs"]
-    col_map = case_insensitive_col_map(active_cat.columns)
-    ra_col = col_map.get("ra", "RA")
-    dec_col = col_map.get("dec", "DEC")
 
-    ra = pd.to_numeric(active_cat[ra_col], errors="coerce").to_numpy(dtype=float)
-    dec = pd.to_numeric(active_cat[dec_col], errors="coerce").to_numpy(dtype=float)
-    ok = np.isfinite(ra) & np.isfinite(dec)
+def _row_radii(catalog: pd.DataFrame, assoc: dict) -> np.ndarray:
+    """Association radius of each catalog row (by its population)."""
+    pops = assoc["populations"]
+    return np.where(_is_injected(catalog), pops["injected_gaia"]["radius_pix"], pops["listed"]["radius_pix"])
 
-    if not np.any(ok):
-        return np.zeros(len(det_x), dtype=bool)
 
-    cat_x = np.full(len(ra), np.nan, dtype=float)
-    cat_y = np.full(len(dec), np.nan, dtype=float)
-    xw, yw = wcs_white.all_world2pix(ra[ok], dec[ok], 0)
-    cat_x[ok] = xw
-    cat_y[ok] = yw
+def _log_association(assoc: dict) -> None:
+    def pop(name, label):
+        p = assoc["populations"][name]
+        sc = (f"scatter {p['sigma_pix']:.2f} px ({p['sigma_x_pix']:.2f}, {p['sigma_y_pix']:.2f}) from "
+              f"{p['n_pairs']} pairs" if p["scatter_measured"]
+              else f"scatter not measured ({p['n_pairs']} pairs < {ASSOC_PAIR_MIN_COUNT})")
+        return f"{label} {p['n_rows']}: {sc}, r {p['radius_pix']:.2f} px"
 
-    cat_x = cat_x[ok]
-    cat_y = cat_y[ok]
+    fw = assoc["fwhm_pix"]
+    if fw is None:
+        logger.warning("bright-mask association: no PSF profile, so no FWHM; the radius floor is "
+                       "pos_max_shift_pix = %.2f px", assoc["max_shift_pix"])
+    logger.info(
+        "bright-mask association (peak within r = min(%.2f, max(FWHM, %.2f x scatter)) of an active row): "
+        "FWHM %s; %s; %s; %d / %d detections are the light of active rows",
+        assoc["max_shift_pix"], assoc["k"],
+        "n/a" if fw is None else f"{fw:.2f} px (band {assoc.get('fwhm_band')})",
+        pop("listed", "listed rows"), pop("injected_gaia", "added Gaia rows"),
+        assoc["n_matched"], assoc["n_detections"])
 
-    if len(det_x) == 0:
-        return np.zeros(0, dtype=bool)
 
-    if os.environ.get("TRACT7DT_BENCH_DISABLE_KDTREE") == "1":
-        matched = np.zeros(len(det_x), dtype=bool)
-        r2 = match_radius_pix ** 2
-        for i in range(len(det_x)):
-            dx = det_x[i] - cat_x
-            dy = det_y[i] - cat_y
-            if np.any(dx * dx + dy * dy <= r2):
-                matched[i] = True
-        return matched
+def _save_association(cfg: dict[str, Any], assoc: dict) -> None:
+    import json
 
-    cat_xy = np.column_stack([cat_x, cat_y])
-    det_xy = np.column_stack([
-        np.asarray(det_x, dtype=float),
-        np.asarray(det_y, dtype=float),
-    ])
-    det_ok = np.isfinite(det_xy).all(axis=1)
-    matched = np.zeros(len(det_x), dtype=bool)
-    if np.any(det_ok):
-        tree = cKDTree(cat_xy)
-        hits = tree.query_ball_point(det_xy[det_ok], r=float(match_radius_pix))
-        matched[det_ok] = np.fromiter((len(h) > 0 for h in hits), dtype=bool)
-
-    return matched
+    wd = (cfg.get("outputs", {}) or {}).get("work_dir")
+    if not wd:
+        return
+    p = Path(wd) / "bright_mask" / "association.json"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(assoc, indent=1) + "\n")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("bright-mask association record not written (%s)", exc)
 
 
 def _flag_affected_sources(
@@ -542,11 +717,12 @@ def _build_ellipse_mask(
 
 def _load_white_psf_profile(cfg: dict[str, Any], state: dict[str, Any]):
     """Load a representative-band ``from_stars`` PSF and return its monotone
-    unit-flux radial profile ``(psf_r, psf_p)`` for the physical-radius mask.
+    unit-flux radial profile ``(psf_r, psf_p)`` for the physical-radius mask
+    and for the FWHM of the detection-catalogue association.
 
-    Returns ``None`` when no from_stars PSF is available (cpu / legacy modes,
-    or the PSF stage did not run), so the caller falls back to the ellipse
-    mask and byte-for-byte reproduces the legacy behaviour. The PSF stage
+    Returns ``None`` when no from_stars PSF is available (the PSF stage did
+    not run, or its file cannot be read): the mask then falls back to the
+    ellipse geometry and the association radius floor to pos_max_shift_pix. The PSF stage
     (``build_psf_polynomial_from_stars_stage``) runs BEFORE
     :func:`finalize_bright_mask`, so ``state['psf_polynomial_dir']`` is set by
     the time this is called in gpu mode.
@@ -560,10 +736,9 @@ def _load_white_psf_profile(cfg: dict[str, Any], state: dict[str, Any]):
         from .fit.grid_gpu.psf_polynomial import evaluate_psf_at_np
         from .fit.grid_gpu.islands import psf_radial_profile
 
-        bands = list(state["image_dict"].keys())
-        if not bands:
+        band = _white_psf_band(state)
+        if band is None:
             return None
-        band = bands[len(bands) // 2]          # middle band ~ white-stack representative
         white = np.asarray(state["white"])
         h, w = white.shape
         psf = load_psf_polynomial_for_band(_Path(str(psf_dir)), band)
@@ -571,9 +746,14 @@ def _load_white_psf_profile(cfg: dict[str, Any], state: dict[str, Any]):
         psf_r, psf_p = psf_radial_profile(np.asarray(stamp, dtype=float))
         return psf_r, psf_p
     except Exception as e:  # pragma: no cover - defensive fallback
-        logger.warning("physical bright-mask: could not load PSF profile (%s); "
-                       "falling back to ellipse mask", e)
+        logger.warning("bright mask: could not load the white-stack PSF profile (%s)", e)
         return None
+
+
+def _white_psf_band(state: dict[str, Any]) -> str | None:
+    """The band whose PSF stands for the white stack: the middle one of ``image_dict``."""
+    bands = list(state["image_dict"].keys())
+    return bands[len(bands) // 2] if bands else None
 
 
 def _physical_radii(
@@ -659,6 +839,7 @@ def _save_diagnostics(
     matched: np.ndarray,
     input_catalog: pd.DataFrame,
     image_dict: dict[str, Any],
+    assoc: dict | None = None,
 ) -> None:
     """Save bright-mask overlay PNG and raw FITS mask."""
     outputs = cfg.get("outputs", {})
@@ -695,7 +876,7 @@ def _save_diagnostics(
     from .async_plot import submit_task
     submit_task(
         _save_overlay_png,
-        cfg, white, mask, objs, matched, input_catalog, image_dict, png_path,
+        cfg, white, mask, objs, matched, input_catalog, image_dict, png_path, assoc,
     )
     logger.info("Queued bright-mask overlay: %s", png_path)
 
@@ -709,12 +890,13 @@ def _save_overlay_png(
     input_catalog: pd.DataFrame,
     image_dict: dict[str, Any],
     png_path: Path,
+    assoc: dict | None = None,
 ) -> None:
-    """Build and save the full-frame bright-mask overlay diagnostic."""
+    """Build and save the full-frame bright-mask overlay diagnostic. A catalog row
+    counts as "matched" when a detection peak lies within its association radius."""
     try:
         dpi = int(cfg.get("plotting", {}).get("dpi", 150))
         bm_cfg = cfg.get("bright_mask", {})
-        match_r = float(bm_cfg.get("match_radius_pix", 3.0))
         ds = max(
             1,
             int(bm_cfg.get("overlay_downsample", cfg.get("overlay", {}).get("downsample_full", 4))),
@@ -780,22 +962,18 @@ def _save_overlay_png(
                 cy_all[coord_ok] = yw
 
                 cat_has_sep = np.zeros(len(input_catalog), dtype=bool)
-                if len(objs) > 0:
-                    det_xy = np.column_stack([
-                        np.asarray(objs["x"], dtype=float),
-                        np.asarray(objs["y"], dtype=float),
+                if len(objs) > 0 and assoc is not None:
+                    peak_xy = np.column_stack([
+                        np.asarray(objs["xcpeak"], dtype=float),
+                        np.asarray(objs["ycpeak"], dtype=float),
                     ])
-                    det_ok = np.isfinite(det_xy).all(axis=1)
                     cat_idx = np.where(
                         coord_ok & np.isfinite(cx_all) & np.isfinite(cy_all)
                     )[0]
-                    if np.any(det_ok) and cat_idx.size > 0:
-                        tree = cKDTree(det_xy[det_ok])
+                    if cat_idx.size > 0:
                         cat_xy = np.column_stack([cx_all[cat_idx], cy_all[cat_idx]])
-                        hits = tree.query_ball_point(cat_xy, r=match_r)
-                        cat_has_sep[cat_idx] = np.fromiter(
-                            (len(h) > 0 for h in hits), dtype=bool, count=len(hits),
-                        )
+                        d_peak, _ = cKDTree(peak_xy).query(cat_xy)
+                        cat_has_sep[cat_idx] = d_peak <= _row_radii(input_catalog, assoc)[cat_idx]
 
                 affected = input_catalog.get("affected_by_bright_mask",
                                              pd.Series(False, index=input_catalog.index)

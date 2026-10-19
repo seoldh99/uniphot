@@ -76,9 +76,15 @@ def test_bright_star_detection_does_not_raise_on_crowded_image(tmp_path):
         import copy
         from tract7dt.config import DEFAULT_CONFIG
         from tract7dt.bright_mask import detect_bright_sources
+        import sep
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         objs = detect_bright_sources(cfg, {"white": img, "sigma_white": err})
-        result = {"n": int(len(objs))}
+        result = {"n": int(len(objs)), "pixstack": int(sep.get_extract_pixstack()),
+                  "sub_object_limit": int(sep.get_sub_object_limit())}
     """, tmp_path)
     assert res["n"] >= 1
+    # Since uniphot 0.1.1 the bright detection removes the sky first, which takes this image's 50-sigma plateau
+    # away, so the call no longer needs the raised limits to pass; the limits must still be in force in the
+    # fresh process right after the call (dev8's effective values).
+    assert res["pixstack"] == 2_000_000 and res["sub_object_limit"] == 200_000
 

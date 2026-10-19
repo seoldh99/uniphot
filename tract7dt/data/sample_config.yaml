@@ -66,13 +66,15 @@ source_saturation_cut:
 
 bright_mask:
   enabled: true                        # Mask bright sources detected on the white stack that are not in the input catalog.
-  thresh_sigma: 5.0                    # SEP detection threshold [sigma] on white stack.
+  thresh_sigma: 5.0                    # SEP detection threshold [sigma] on the white stack, above the local sky (SEP 64 px mesh) in units of the locally measured noise.
   minarea: 20                          # SEP minimum detection area [pix].
   deblend_nthresh: 32                  # SEP deblending sub-thresholds.
   deblend_cont: 0.005                  # SEP deblending contrast.
   clean: true                          # SEP source cleaning.
   clean_param: 1.0                     # SEP cleaning parameter.
-  match_radius_pix: 3.0                # Radius [pix] for matching SEP detections to active catalog sources.
+  # A detection is the light of a listed source when its peak lies within max(the run's PSF FWHM, 3.72 x the list-image
+  # scatter measured in the run) of an active row, at most compute.gpu.positions.pos_max_shift_pix (record:
+  # bright_mask/association.json). Other detections are masked, or subtracted with subtract_unmatched.
   ellipse_scale: 3                     # Scale factor applied to SEP ellipse (a, b) for mask geometry.
   min_radius_pix: 6.0                  # Minimum mask radius [pix] even for compact sources.
   dilate_pix: 1                        # Binary dilation [pix] applied to final mask.
